@@ -1,0 +1,610 @@
+---
+title: "Blog 3: Figures"
+subtitle: "Combined whole blood and plasma analysis"
+author: "Harmon Bhasin"
+date: 2024-10-23
+format:
+  html:
+    toc: true 
+    toc-title: "Table of contents" 
+    number-sections: true 
+    number-depth: 3 
+    toc-location: right 
+    page-layout: full 
+    code-fold: false 
+    code-tools: false 
+    df-print: paged 
+    fig-format: svg
+editor: 
+  visual: true
+  render-on-save: false
+comments:
+  hypothesis: true 
+execute: 
+  echo: false
+  freeze: auto
+  cache: true
+title-block-banner: "#de2d26"
+---
+
+# Basics
+```{r}
+#| label: load-packages
+#| include: false
+
+library(pacman)
+pacman::p_load(tidyverse, RColorBrewer, scales, ggbeeswarm, ggpubr, grid, gridExtra, ggforce, extrafont)
+
+source("/Users/harmonbhasin/work/securebio/resources/sampling-strategies/scripts/aux_plot-theme.R")
+theme_base <- theme_base + theme(aspect.ratio = NULL)
+theme_kit <- theme_base + theme(
+  axis.text.x = element_text(hjust = 1, angle = 45),
+  axis.title.x = element_blank(),
+)
+tnl <- theme(legend.position = "none")
+
+# Okabe Ito color scheme with amber for yellow; see https://easystats.github.io/see/reference/scale_color_okabeito.html
+colors_oi <- grDevices::palette.colors()  
+colors_oi['yellow'] <- "#F5C710"
+colors_oi <- colors_oi |> unname()
+```
+
+```{r}
+#| label: set-up-paths
+#| include: false
+
+# Data input paths
+datasets <- c("cebriamendoza2021", "thijssen2023", "mengyi2023",  "thompson2023","oconnell2023", "aydillo2022")
+formatted_datasets <- c("Cebria-Mendoza et al. (2021)", "Thijssen et al. (2023)", "Mengyi et al. (2023)", "Thompson et al. (2023)","O'Connell (2024)", "Aydillo et al. (2022)")
+sample_types <- c("Plasma", "Plasma", "Plasma", "Whole blood", "Whole blood", "Whole blood")
+
+data_base <- "/Users/harmonbhasin/work/securebio/blood-sampling/mgs-analysis"
+
+data_dir <- file.path(data_base, datasets)
+input_dirs <- file.path(data_dir, "/input")
+results_dirs <- file.path(data_dir, "/results")
+qc_dirs <- file.path(results_dirs, "qc")
+hv_dirs <- file.path(results_dirs, "hv")
+libraries_paths <- file.path(input_dirs, "libraries.csv")
+basic_stats_paths <- file.path(qc_dirs, "qc_basic_stats.tsv.gz")
+out_dir <- "/Users/harmonbhasin/work/securebio/blood-sampling/blog-posts/blog-3"
+```
+
+```{r}
+#| label: load-libraries
+#| include: false
+
+low_sample_number <- c('SRR21924256')
+
+libraries <- purrr::map2(libraries_paths, seq_along(datasets), ~read_csv(.x, show_col_types = FALSE) %>% mutate(dataset = datasets[.y], sample_type = sample_types[.y])) %>% bind_rows() %>%
+  mutate(sample_type = factor(sample_type)) %>%
+  mutate(dataset = factor(dataset, levels = datasets)) %>%
+  filter(!sample %in% low_sample_number)
+```
+
+```{r}
+#| label: import-stats
+#| include: false
+
+basic_stats <- lapply(basic_stats_paths, read_tsv, show_col_types = FALSE) %>%
+  bind_rows() %>%
+  inner_join(libraries, by="sample") %>% arrange(sample) %>%
+  mutate(stage = factor(stage, levels = c("raw_concat", "cleaned", "dedup", "ribo_initial", "ribo_secondary")),
+         sample = fct_inorder(sample)) %>%
+  filter(!sample %in% low_sample_number)
+
+basic_stats_raw <- basic_stats %>% 
+  filter(stage == "raw_concat") %>%
+  mutate(dataset = factor(dataset, levels = datasets, labels = formatted_datasets))
+
+raw_read_counts <- basic_stats_raw %>% 
+  group_by(dataset) %>%
+   summarize(rmin = min(n_read_pairs), rmax=max(n_read_pairs),
+             rmean=mean(n_read_pairs), 
+             rtot = sum(n_read_pairs),
+             btot = sum(n_bases_approx),
+             dmin = min(percent_duplicates), dmax=max(percent_duplicates),
+             dmean=mean(percent_duplicates), .groups = "drop")
+```
+
+```{r}
+#| label: prepare-hv
+#| include: false
+#| cache-lazy: false
+
+# Get viral taxonomy
+viral_taxa <- read_tsv("/Users/harmonbhasin/work/securebio/resources/total-virus-db.tsv.gz", show_col_types = FALSE)
+
+# Import and format reads
+hv_reads_path <- file.path(hv_dirs, "hv_hits_putative_collapsed.tsv.gz")
+mrg_hv_raw <- lapply(hv_reads_path, read_tsv, show_col_types = FALSE)
+
+mrg_hv_raw <- lapply(mrg_hv_raw, function(df) {
+  df %>% mutate(taxid = as.character(taxid))
+})
+
+# New change: We don't want reads where Kraken2 is unclassified
+mrg_hv_with_spike_in <- mrg_hv_raw %>%
+  bind_rows() %>%
+  inner_join(libraries, by="sample") %>% arrange(sample) %>%
+  mutate(kraken_label = ifelse(assigned_hv, "Kraken2 HV assignment",
+                               "No Kraken2 assignment")) %>%
+  mutate(adj_score_max = pmax(adj_score_fwd, adj_score_rev),
+         highscore = adj_score_max >= 20,
+         hv_status = assigned_hv | highscore) %>%
+  rename(taxid_all = taxid, taxid = taxid_best) %>%
+  filter(assigned_name != "unclassified")
+```
+
+```{r}
+#| label: raise-hv-taxa-temp
+#| include: false
+#| cache-lazy: false
+
+# Filter samples and add viral taxa information
+mrg_hv_named_with_spike_in <- mrg_hv_with_spike_in %>% left_join(viral_taxa, by="taxid") 
+
+ # Discover viral species & genera for HV reads
+raise_rank <- function(read_db, taxid_db, out_rank = "species", verbose = FALSE){
+   # Get higher ranks than search rank
+   ranks <- c("subspecies", "species", "subgenus", "genus", "subfamily", "family", "suborder", "order", "class", "subphylum", "phylum", "kingdom", "superkingdom")
+   rank_match <- which.max(ranks == out_rank)
+   high_ranks <- ranks[rank_match:length(ranks)]
+   # Merge read DB and taxid DB
+   reads <- read_db %>% select(-parent_taxid, -rank, -name) %>%
+     left_join(taxid_db, by="taxid")
+   # Extract sequences that are already at appropriate rank
+   reads_rank <- filter(reads, rank == out_rank)
+   # Drop sequences at a higher rank and return unclassified sequences
+   reads_norank <- reads %>% filter(rank != out_rank, !rank %in% high_ranks, !is.na(taxid))
+   while(nrow(reads_norank) > 0){ # As long as there are unclassified sequences...
+     # Promote read taxids and re-merge with taxid DB, then re-classify and filter
+     reads_remaining <- reads_norank %>% mutate(taxid = parent_taxid) %>%
+       select(-parent_taxid, -rank, -name) %>%
+       left_join(taxid_db, by="taxid")
+     reads_rank <- reads_remaining %>% filter(rank == out_rank) %>%
+       bind_rows(reads_rank)
+     reads_norank <- reads_remaining %>%
+       filter(rank != out_rank, !rank %in% high_ranks, !is.na(taxid))
+   }
+   # Finally, extract and append reads that were excluded during the process
+   reads_dropped <- reads %>% filter(!seq_id %in% reads_rank$seq_id)
+   reads_out <- reads_rank %>% bind_rows(reads_dropped) %>%
+     select(-parent_taxid, -rank, -name) %>%
+     left_join(taxid_db, by="taxid")
+   return(reads_out)
+ }
+hv_reads_family <- raise_rank(mrg_hv_named_with_spike_in, viral_taxa, "family")
+
+# Filter out reads in Microviridae and Rhabdoviridae from dataset.
+filter_seq_ids <-hv_reads_family %>%
+  filter(dataset == "cebriamendoza2021" & name %in% c("Microviridae", "Rhabdoviridae")) %>% 
+  pull(seq_id)
+
+remove_reads <- hv_reads_family %>%
+  filter(dataset == "cebriamendoza2021" & name %in% c("Microviridae", "Rhabdoviridae")) %>%
+  group_by(sample) %>%
+  count(name = "n_reads_removed")
+
+basic_stats_raw <- basic_stats_raw %>%
+  left_join(remove_reads) %>%
+  mutate(n_read_pairs = ifelse(is.na(n_reads_removed), n_read_pairs, n_read_pairs - n_reads_removed))
+
+mrg_hv <- mrg_hv_with_spike_in %>%
+  filter(!seq_id %in% filter_seq_ids)
+mrg_hv_named <- mrg_hv %>% left_join(viral_taxa, by="taxid")
+
+raw_read_counts <- basic_stats_raw %>% 
+  group_by(dataset) %>%
+   summarize(rmin = min(n_read_pairs), rmax=max(n_read_pairs),
+             rmean=mean(n_read_pairs), 
+             rtot = sum(n_read_pairs),
+             btot = sum(n_bases_approx),
+             dmin = min(percent_duplicates), dmax=max(percent_duplicates),
+             dmean=mean(percent_duplicates), .groups = "drop")
+```
+
+
+```{r}
+#| label: prepare-plotting-template
+#| include: false
+
+classifications <- c("Unassigned", "Human","Bacterial", "Archaeal", "Viral")
+
+# Prepare plotting templates
+g_comp_base <- ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
+  scale_x_discrete(name="") +
+  theme_kit + 
+  theme(plot.title = element_text(hjust=0, face="plain", size=rel(1.5))) +
+  facet_grid(sample_type ~ ., scales = "free_y")
+
+g_comp_base_study <- ggplot(mapping=aes(x=sample, y=p_reads, fill=classification)) +
+  scale_x_discrete(name="") +
+  theme_kit + 
+  theme(plot.title = element_text(hjust=0, face="plain", size=rel(1.5))) +
+  facet_grid(dataset ~ ., scales = "free_y")
+#  facet_wrap(~sample_type, scales = "free_y", ncols=1)
+
+scale_y_pc_reads <- purrr::partial(scale_y_continuous, name = "% Reads",
+                                   expand = c(0,0), labels = function(y) sprintf("%.0f%%", y*100))
+geom_comp <- purrr::partial(geom_col, position = "stack", width = 0.75)
+
+# Define a color palette for the classification
+classification_colors <- brewer.pal(8, "Accent")
+names(classification_colors) <- classifications
+scale_fill_classification <- function() {
+  scale_fill_manual(values = classification_colors, name = "Classification")
+}
+```
+
+# Kingdom composition
+```{r}
+#| label: kingdom-fraction-plot
+#| warning: false
+#| fig-width: 15
+#| fig-height: 7.5
+#| fig-cap: "**Figure 1**: Kingdom composition."
+
+# Import composition data
+tax_final_dirs <- file.path(results_dirs, "taxonomy_final")
+comp_paths <- file.path(tax_final_dirs, "taxonomic_composition.tsv.gz")
+
+comp <- lapply(comp_paths, read_tsv, show_col_types = FALSE) %>% bind_rows() %>%
+  inner_join(libraries, by='sample')
+
+comp <- comp %>% left_join(remove_reads) %>%
+  mutate(n_reads = case_when(
+    classification == "Viral" & !is.na(n_reads_removed) ~ n_reads - n_reads_removed,
+    TRUE ~ n_reads
+  ))
+
+dataset_comp <- comp %>%
+  filter(classification %in% classifications) %>%
+  group_by(dataset, classification) %>%
+  summarize(n_reads = sum(n_reads), .groups = "drop_last") %>%
+  ungroup() %>%
+  group_by(dataset) %>%
+  mutate(total_reads = sum(n_reads)) %>%
+  ungroup() %>%
+  group_by(dataset, classification) %>%
+  mutate(p_reads = n_reads / total_reads) %>%
+  select(dataset, classification, p_reads) %>%
+  ungroup() %>%
+  left_join(libraries[3:4] %>% unique(), by="dataset") %>%
+  mutate(dataset = factor(dataset, levels = datasets, labels = formatted_datasets))
+
+dataset_comp_summ <- dataset_comp %>% 
+  mutate(p_reads = base::signif(p_reads*100, 3)) %>%
+  pivot_wider(names_from = classification, values_from = p_reads)
+
+dataset_comp_summ
+```
+
+# Human-infecting viruses
+
+## Overview
+```{r}
+#| label: count-hv-reads
+#| fig-width: 15
+#| fig-height: 7.5
+#| warning: false
+#| fig-cap: "**Figure 2**: Relative abundance of human-infecting viruses across datasets (pseudocounts of 1e-10 are added to all samples)."
+
+read_counts_raw <- filter(basic_stats_raw) %>%
+  dplyr::select(sample, n_reads_raw = n_read_pairs)
+
+read_counts_hv <- mrg_hv %>% filter(hv_status) %>% 
+  group_by(sample) %>% 
+  count(name="n_reads_hv")
+
+read_counts <- read_counts_raw %>%
+  left_join(read_counts_hv, by=c("sample")) %>%
+  mutate(n_reads_hv = replace_na(n_reads_hv, 0)) %>%
+  inner_join(libraries, by=c("sample")) %>%
+  mutate(p_reads = n_reads_hv/n_reads_raw) %>% 
+  select(!library) %>%
+  mutate(dataset = factor(dataset, levels = datasets, labels = formatted_datasets))
+
+# If just violin plot
+g_all_violin <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-10, fill = sample_type)) +
+  # Violin layer with quantiles
+  geom_violin(
+    alpha = 0.8, 
+    scale = "width",
+#    trim = TRUE, # Trim the tails
+    color = "black" # Outline color
+  ) +
+  # Custom boxplot with thinner lines
+  geom_boxplot(
+    width = 0.15, 
+    alpha = 0.7,
+    outlier.shape = 21,
+    outlier.size = 2,
+    outlier.alpha = 0.6,
+    fill = "white"
+  ) +
+  scale_y_log10(
+    labels = label_log(digits = 3), 
+    breaks = c(1e-10, 1e-7, 1e-4, 1e-1)
+  ) +
+  labs(
+    title = "",
+    x = "",
+    y = "Relative Abundance"
+  ) +
+  theme_kit +
+  coord_flip() +
+  theme(
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(size = 10, angle = 0, hjust = 0.5, vjust = 1),
+    axis.ticks.y = element_blank(),
+    axis.title.y = element_blank(),
+    axis.line.x = element_line(size = 1, color = "black"),
+    axis.ticks.x = element_line(size = 1, color = "black"),
+    legend.position = "bottom",
+    legend.title = element_text(size = 10),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+g_all_violin
+#ggsave(file.path(out_dir, "filtered/ra_hv_reads_violin.png"), g_all_violin, width = 10, height = 5)
+```
+
+## Family
+````{r}
+#| label: extract-genus-reads
+#| include: false
+#| cache-lazy: false
+hv_reads_family <- raise_rank(mrg_hv_named, viral_taxa, "family")
+hv_reads_genus <- raise_rank(mrg_hv_named, viral_taxa, "genus")
+```
+
+### Family composition
+```{r}
+#| label: explore-hv-family-sample-type
+#| fig-width: 15
+#| fig-height: 7.5
+#| cache-lazy: false 
+#| fig-cap: "**Figure 3**: Family composition of human-infecting viral reads"
+
+threshold_major_family <- 0.05
+
+# Create vector of bacteriophage family names to remove
+bacteriophage_families <- c("Microviridae", "Caudovirus D_HF5_3", 
+                           "Caudovirus D_HF2_7", "Inoviridae",
+                           "Hudisavirus sp.", "Intestiviridae")
+
+# Count reads for each human-viral family
+hv_family_counts <- hv_reads_family %>% 
+  filter(!name %in% bacteriophage_families) %>%
+  group_by(name, taxid, dataset) %>%
+  count(name = "n_reads_hv") %>%
+  group_by(dataset) %>%
+  mutate(p_reads_hv = n_reads_hv/sum(n_reads_hv))
+
+# Identify high-ranking families and group others
+hv_family_major_tab <- hv_family_counts %>% group_by(name) %>% 
+  filter(p_reads_hv == max(p_reads_hv)) %>% filter(row_number() == 1) %>%
+  arrange(desc(p_reads_hv)) %>% filter(p_reads_hv > threshold_major_family)
+hv_family_counts_major <- hv_family_counts %>%
+  mutate(name_display = ifelse(name %in% hv_family_major_tab$name, name, "Other")) %>%
+  group_by(dataset, name_display) %>%
+  summarize(n_reads_hv = sum(n_reads_hv), p_reads_hv = sum(p_reads_hv), 
+            .groups="drop") %>%
+  mutate(name_display = factor(name_display, 
+                               levels = c(hv_family_major_tab$name, "Other")))
+hv_family_counts_display <- hv_family_counts_major %>%
+  rename(p_reads = p_reads_hv, classification = name_display) %>%
+  left_join(libraries[3:4] %>% unique(), by="dataset") %>%
+  mutate(dataset = factor(dataset, levels = datasets, labels = formatted_datasets))
+
+# Get most prominent families for text
+hv_family_collate <- hv_family_counts %>%
+  group_by(name, taxid, dataset) %>% 
+  summarize(n_reads_tot = sum(n_reads_hv),
+            p_reads_max = max(p_reads_hv), .groups="drop") %>% 
+  arrange(desc(n_reads_tot))
+
+# Convert the factor to a character vector
+hv_family_counts_display$classification <- as.character(hv_family_counts_display$classification)
+
+mapping <- c("Anelloviridae" = "Anelloviridae (ssDNA)", "Flaviviridae" = "Flaviviridae (+ssRNA)", "Adenoviridae" = "Adenoviridae (dsDNA)", "Papillomaviridae" = "Papillomaviridae (dsDNA)", "Parvoviridae" = "Parvoviridae (ssDNA)", "Orthoherpesviridae" = "Orthoherpesviridae (dsDNA)", "Retroviridae" = "Retroviridae (ssRNA-RT)", "Other" = "Other")
+
+order <- c("Anelloviridae (ssDNA)", "Flaviviridae (+ssRNA)", "Adenoviridae (dsDNA)", "Papillomaviridae (dsDNA)", "Parvoviridae (ssDNA)", "Orthoherpesviridae (dsDNA)", "Retroviridae (ssRNA-RT)", "Other")
+
+hv_family_counts_display <- hv_family_counts_display %>%
+  mutate(classification = mapping[as.character(classification)]) %>%
+  mutate(classification = factor(classification, levels = order))
+
+light_palette_paul_tor <- c('#77AADD', '#EE8866', '#EEDD88', '#FFAABB', '#99DDFF', '#44BB99', '#BBCC33', '#AAAA00', '#DDDDDD')
+
+# Get all unique classifications except "Other"
+non_other_classes <- hv_family_counts_display %>% 
+  filter(classification != "Other") %>% 
+  pull(classification) %>% 
+  unique()
+
+# Create color vector with specific order
+colors <- c(light_palette_paul_tor[1:(length(light_palette_paul_tor)-2)], # All colors except last
+            '#DDDDDD') # Last color for "Other"
+
+
+g_hv_family <- g_comp_base + 
+  geom_col(data=hv_family_counts_display, position = "stack", width=0.75) +
+  scale_y_continuous(name="% HV Reads", limits=c(0,1.01), 
+                     breaks = seq(0,1,0.2),
+                     expand=c(0,0), labels = function(y) sprintf("%.0f%%", y*100)) +
+  scale_fill_manual(values = colors) +
+  labs(title="") +
+  guides(fill=guide_legend(ncol=4)) +
+  theme_kit + 
+  theme(
+    plot.title = element_text(size=rel(1.4), hjust=0, face="plain"),
+    axis.text.y = element_text(size = 16),
+    axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5, vjust = 1),
+    axis.ticks.y = element_blank(), # Remove x-axis ticks
+    axis.title.y = element_blank(), # Remove x-axis title
+    axis.line.x = element_line(size = 1, color = "black"), # Thicker y-axis line
+    axis.ticks.x = element_line(size = 1, color = "black"), # Thicker y-axis ticks)
+    strip.text = element_text(size = 20, face = "bold")
+    ) + 
+    coord_flip()
+g_hv_family
+#ggsave(file.path(out_dir, "filtered/all_family_composition.png"), g_hv_family, width = 20, height = 10)
+```
+
+## Genus
+
+```{r}
+
+# Create vector of bacteriophage names to remove
+bacteriophages <- c("Microvirus sp.", "Microviridae sp.", 
+                   "Caudovirus D_HF5_3", "Gokushovirus WZ-2015a",
+                   "Caudovirus D_HF2_7", "Inovirus",
+                   "Human gut gokushovirus")
+
+dataset_hv_reads_genus <- hv_reads_genus %>%
+  left_join(hv_reads_family %>% select(name, seq_id) %>% rename("family"="name"), by=c("seq_id")) %>%
+  group_by(name, taxid, dataset, sample, family) %>%
+  count(name = "n_reads_hv") %>%
+  ungroup()
+
+all_dataset_ra <- read_counts_raw %>%
+  left_join(dataset_hv_reads_genus, by=c("sample")) %>%
+  mutate(n_reads_hv = replace_na(n_reads_hv, 0)) %>%
+  left_join(libraries, by=c("sample", "dataset")) %>%
+  mutate(ra = n_reads_hv / n_reads_raw)
+
+all_genus <- all_dataset_ra %>% select(name) %>% drop_na() %>% distinct() %>% pull(name)
+all_genus <- all_genus[!all_genus %in% bacteriophages]
+
+genera_specific_dataset_ra <- all_dataset_ra %>% 
+  filter(name %in% all_genus)
+
+# Create a reference table for genus names
+genus_reference <- dataset_hv_reads_genus %>%
+  ungroup() %>%
+  select(name, taxid, family) %>%
+  distinct()
+
+filtered_dataset_ra <- libraries %>%
+  crossing(name = all_genus) %>%
+  left_join(genera_specific_dataset_ra, by = c("sample", "dataset","sample_type", "name", "library")) %>%
+  mutate(
+    n_reads_hv = coalesce(n_reads_hv, 0),
+    ra = coalesce(ra, 0),
+    n_reads_raw = coalesce(n_reads_raw, 0)
+  ) %>%
+  group_by(name) %>%  # Group only by name, not dataset
+  filter(sum(n_reads_hv > 0) >= 5) %>%  # Count samples across all datasets
+  ungroup() %>%
+  left_join(genus_reference, by="name") %>%
+  select(-taxid.x, -family.x) %>%
+  rename(taxid=taxid.y, family=family.y) %>% 
+  left_join(read_counts_raw, by=c("sample")) %>%
+  select(-n_reads_raw.x) %>%
+  rename(n_reads_raw=n_reads_raw.y)
+```
+
+
+
+```{r}
+filtered_dataset_ra <- filtered_dataset_ra %>%
+  filter(!(str_detect(name, "TT virus")) & !(str_detect(name, "Small anellovirus")) & !(str_detect(name, "Micro "))) %>%
+  mutate(family = factor(family, levels = sort(unique(family), decreasing = TRUE)))
+
+g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = ra, fill = dataset, color = dataset)) +
+  geom_quasirandom(
+    method = "quasirandom", 
+    size = 1, 
+    shape = 21, 
+    stroke = 1,
+  ) +
+  scale_y_log10("Relative abundance in positive samples", labels = label_log(digits = 3)) + 
+  theme_kit +
+  coord_flip() +
+  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_brewer(palette = "RdYlBu") +
+  ggforce::facet_col(~family, scales = "free_y", space = "free")+
+  labs(x = "", y = "") +
+  theme(
+    text = element_text(family = "Arial"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 12),
+    axis.text.x = element_text(size = 13, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 13, face = "bold"),
+    axis.ticks.y = element_blank(),
+    axis.line.x = element_line(color = "black", size = 1),
+    axis.ticks.x = element_line(color = "black", size = 1),
+    axis.ticks.length.x = unit(0.25, "cm"),
+    strip.background = element_rect(
+      fill = "lightgrey",  # Background color
+      color = "lightgrey",  # Border color
+      size = 0.5         # Border thickness
+    ),
+    strip.text = element_text(
+      size = 9,
+      face = "bold",
+      color = "white"
+    ),
+  )
+g_hv_genus
+
+virus_prevalence <- filtered_dataset_ra %>%
+  group_by(dataset, name, sample_type, family) %>%
+  summarize(
+    total_samples = n(),
+    positive_samples = sum(n_reads_hv > 0),
+    prevalence_percent = (positive_samples / total_samples),
+    .groups = 'drop'
+  ) %>%
+  arrange(dataset, desc(prevalence_percent))
+
+
+g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = name, fill = dataset)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_x_continuous(
+    name = "Fraction positive samples", 
+    trans = "sqrt",
+    breaks = c(0, 0.01, 0.1, 0.25, 0.5, 0.75, 1),
+    labels = scales::percent_format(accuracy = 1),
+    limits = c(0, 1)
+  ) +
+  ggforce::facet_col(~family, scales = "free_y", space = "free")+
+  scale_fill_brewer(palette = "RdYlBu") +
+  theme_kit +
+  theme(
+    text = element_text(family = "Arial"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 12),
+    axis.text.y = element_text(size = 13),
+    axis.text.x = element_text(size = 13, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 13, face = "bold"),
+    axis.title.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.x = element_line(color = "black", size = 1),
+    axis.ticks.x = element_line(color = "black", size = 1),
+    axis.ticks.length.x = unit(0.25, "cm"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),  
+    panel.spacing = unit(0.1, "lines"),  # Reduce space between facets
+    strip.background = element_rect(
+      fill = "lightgrey",  # Background color
+      color = "lightgrey",  # Border color
+      size = 0.5         # Border thickness
+    ),
+    strip.text = element_text(
+      size = 9,
+      face = "bold",
+      color = "white"
+    )
+  )
+g_virus_prevalence
+joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_genus + theme(axis.text.y=element_blank()), 
+                        ncol = 2, nrow = 1, align = "h", common.legend = TRUE, legend = "bottom",
+                        widths = c(1, 1.5))  # Adjust the widths to make the first plot wider
+joint_plot
+#ggsave(file.path(out_dir, "filtered/prevelance_ra_genus_w_family_barplot.png"), joint_plot, width = 17.5, height = 20)
+
+```

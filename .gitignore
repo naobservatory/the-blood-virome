@@ -1,0 +1,8 @@
+*png
+*tsv
+*txt
+resources/*
+filtered/*
+.DS_Store
+mike-analysis.qmd
+statistic-analysis-v1.qmd
