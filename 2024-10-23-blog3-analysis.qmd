@@ -40,6 +40,7 @@ theme_base <- theme_base + theme(aspect.ratio = NULL)
 theme_kit <- theme_base + theme(
   axis.text.x = element_text(hjust = 1, angle = 45),
   axis.title.x = element_blank(),
+  text = element_text(size = 12)
 )
 tnl <- theme(legend.position = "none")
 
@@ -54,8 +55,9 @@ colors_oi <- colors_oi |> unname()
 #| include: false
 
 # Data input paths
-datasets <- c("cebriamendoza2021", "thijssen2023", "mengyi2023",  "thompson2023","oconnell2023", "aydillo2022")
-formatted_datasets <- c("Cebria-Mendoza et al. (2021)", "Thijssen et al. (2023)", "Mengyi et al. (2023)", "Thompson et al. (2023)","O'Connell (2024)", "Aydillo et al. (2022)")
+datasets <- c("cebriamendoza2021", "thijssen2023", "mengyi2023",  "aydillo2022","oconnell2023", "thompson2023")
+
+formatted_datasets <- c("Cebria-Mendoza et al. (2021)", "Thijssen et al. (2023)", "Mengyi et al. (2023)", "Aydillo et al. (2022)","O'Connell (2024)", "Thompson et al. (2023)")
 sample_types <- c("Plasma", "Plasma", "Plasma", "Whole blood", "Whole blood", "Whole blood")
 
 data_base <- "/Users/harmonbhasin/work/securebio/blood-sampling/mgs-analysis"
@@ -274,10 +276,10 @@ dataset_comp <- comp %>%
   mutate(dataset = factor(dataset, levels = datasets, labels = formatted_datasets))
 
 dataset_comp_summ <- dataset_comp %>% 
-  mutate(p_reads = base::signif(p_reads*100, 3)) %>%
+  mutate(p_reads = base::signif(p_reads*100, 4)) %>%
   pivot_wider(names_from = classification, values_from = p_reads)
 
-dataset_comp_summ
+dataset_comp_summ %>% view()
 ```
 
 # Human-infecting viruses
@@ -303,51 +305,34 @@ read_counts <- read_counts_raw %>%
   inner_join(libraries, by=c("sample")) %>%
   mutate(p_reads = n_reads_hv/n_reads_raw) %>% 
   select(!library) %>%
-  mutate(dataset = factor(dataset, levels = datasets, labels = formatted_datasets))
+  mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
 
-# If just violin plot
 g_all_violin <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-10, fill = sample_type)) +
-  # Violin layer with quantiles
-  geom_violin(
-    alpha = 0.8, 
-    scale = "width",
-#    trim = TRUE, # Trim the tails
-    color = "black" # Outline color
-  ) +
-  # Custom boxplot with thinner lines
-  geom_boxplot(
-    width = 0.15, 
-    alpha = 0.7,
-    outlier.shape = 21,
-    outlier.size = 2,
-    outlier.alpha = 0.6,
-    fill = "white"
-  ) +
-  scale_y_log10(
-    labels = label_log(digits = 3), 
-    breaks = c(1e-10, 1e-7, 1e-4, 1e-1)
-  ) +
-  labs(
-    title = "",
-    x = "",
-    y = "Relative Abundance"
-  ) +
-  theme_kit +
+  geom_violin(alpha = 0.8, scale = "width", color = "black") +
+  geom_boxplot(width = 0.15, alpha = 0.7, outlier.shape = 21, outlier.size = 2, outlier.alpha = 0.6, fill = "white") +
+  scale_y_log10(labels = label_log(digits = 3), breaks = c(1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) +
+  labs(title = "", x = "", y = "Relative Abundance") +
   coord_flip() +
+  scale_fill_discrete(name = "Sample Type") +
+  theme_bw() + 
   theme(
-    axis.text.y = element_text(size = 10),
-    axis.text.x = element_text(size = 10, angle = 0, hjust = 0.5, vjust = 1),
+    axis.text.y = element_text(size = 15),
+    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5, vjust = 1),
+    axis.title.x = element_text(size = 15),
     axis.ticks.y = element_blank(),
-    axis.title.y = element_blank(),
     axis.line.x = element_line(size = 1, color = "black"),
     axis.ticks.x = element_line(size = 1, color = "black"),
-    legend.position = "bottom",
-    legend.title = element_text(size = 10),
+    legend.title = element_text(size = 15),
+    legend.text = element_text(size = 15),
+    legend.spacing.x = unit(1, 'cm'),
+    legend.position = c(0.8, 0.2),
+    legend.background = element_rect(fill = "white", color = "black", size = 0.5),
+    legend.margin = margin(t = 5, r = 5, b = 5, l = 5),
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank()
   )
 g_all_violin
-#ggsave(file.path(out_dir, "filtered/ra_hv_reads_violin.png"), g_all_violin, width = 10, height = 5)
+ggsave(file.path(out_dir, "final/ra_hv_reads_violin.png"), g_all_violin, width = 12.5, height = 7.5)
 ```
 
 ## Family
@@ -428,29 +413,36 @@ non_other_classes <- hv_family_counts_display %>%
 colors <- c(light_palette_paul_tor[1:(length(light_palette_paul_tor)-2)], # All colors except last
             '#DDDDDD') # Last color for "Other"
 
+hv_family_counts_display <- hv_family_counts_display %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
 
-g_hv_family <- g_comp_base + 
+#g_hv_family <- g_comp_base + 
+g_hv_family <-  ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
+  scale_x_discrete(name="") +
+  ggforce::facet_col(~sample_type, scales = "free_y", space = "free")+
   geom_col(data=hv_family_counts_display, position = "stack", width=0.75) +
   scale_y_continuous(name="% HV Reads", limits=c(0,1.01), 
                      breaks = seq(0,1,0.2),
                      expand=c(0,0), labels = function(y) sprintf("%.0f%%", y*100)) +
   scale_fill_manual(values = colors) +
   labs(title="") +
-  guides(fill=guide_legend(ncol=4)) +
-  theme_kit + 
+  guides(fill=guide_legend(nrow=2, reverse = TRUE)) +
+  theme_bw() +
   theme(
     plot.title = element_text(size=rel(1.4), hjust=0, face="plain"),
     axis.text.y = element_text(size = 16),
-    axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5, vjust = 1),
+    axis.text.x = element_text(size = 16, angle = 0, hjust = 0.5, vjust = 1),
     axis.ticks.y = element_blank(), # Remove x-axis ticks
     axis.title.y = element_blank(), # Remove x-axis title
     axis.line.x = element_line(size = 1, color = "black"), # Thicker y-axis line
     axis.ticks.x = element_line(size = 1, color = "black"), # Thicker y-axis ticks)
-    strip.text = element_text(size = 20, face = "bold")
+    strip.text = element_text(size = 20, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 16)
     ) + 
     coord_flip()
 g_hv_family
-#ggsave(file.path(out_dir, "filtered/all_family_composition.png"), g_hv_family, width = 20, height = 10)
+ggsave(file.path(out_dir, "final/all_family_composition.png"), g_hv_family, width = 20, height = 10)
 ```
 
 ## Genus
@@ -520,19 +512,20 @@ g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = r
     shape = 21, 
     stroke = 1,
   ) +
-  scale_y_log10("Relative abundance in positive samples", labels = label_log(digits = 3)) + 
-  theme_kit +
+  scale_y_log10("Relative abundance in positive samples", labels = label_log(digits = 3), breaks = c(1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) + 
+#  theme_kit +
   coord_flip() +
   scale_fill_brewer(palette = "RdYlBu") +
   scale_color_brewer(palette = "RdYlBu") +
   ggforce::facet_col(~family, scales = "free_y", space = "free")+
   labs(x = "", y = "") +
+  theme_bw() +
   theme(
     text = element_text(family = "Arial"),
-    legend.title = element_text(size = 12, face = "bold"),
-    legend.text = element_text(size = 12),
-    axis.text.x = element_text(size = 13, angle = 0, hjust = 0.5),
-    axis.title.x = element_text(size = 13, face = "bold"),
+    legend.title = element_text(size = 20, face = "bold"),
+    legend.text = element_text(size = 20),
+    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 20, face = "bold"),
     axis.ticks.y = element_blank(),
     axis.line.x = element_line(color = "black", size = 1),
     axis.ticks.x = element_line(color = "black", size = 1),
@@ -543,7 +536,7 @@ g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = r
       size = 0.5         # Border thickness
     ),
     strip.text = element_text(
-      size = 9,
+      size = 18,
       face = "bold",
       color = "white"
     ),
@@ -558,8 +551,8 @@ virus_prevalence <- filtered_dataset_ra %>%
     prevalence_percent = (positive_samples / total_samples),
     .groups = 'drop'
   ) %>%
-  arrange(dataset, desc(prevalence_percent))
-
+  mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
+#  arrange(dataset, desc(prevalence_percent))
 
 g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = name, fill = dataset)) +
   geom_bar(stat = "identity", position = "dodge") +
@@ -571,15 +564,16 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
     limits = c(0, 1)
   ) +
   ggforce::facet_col(~family, scales = "free_y", space = "free")+
-  scale_fill_brewer(palette = "RdYlBu") +
-  theme_kit +
+  scale_fill_brewer(palette = "RdYlBu", direction = -1) +
+  guides(fill=guide_legend(reverse = TRUE)) +
+  theme_bw() + 
   theme(
     text = element_text(family = "Arial"),
-    legend.title = element_text(size = 12, face = "bold"),
-    legend.text = element_text(size = 12),
-    axis.text.y = element_text(size = 13),
-    axis.text.x = element_text(size = 13, angle = 0, hjust = 0.5),
-    axis.title.x = element_text(size = 13, face = "bold"),
+    legend.title = element_text(size = 20, face = "bold"),
+    legend.text = element_text(size = 15),
+    axis.text.y = element_text(size = 20),
+    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 20, face = "bold"),
     axis.title.y = element_blank(),
     axis.line.y = element_blank(),
     axis.ticks.y = element_blank(),
@@ -595,16 +589,16 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
       size = 0.5         # Border thickness
     ),
     strip.text = element_text(
-      size = 9,
+      size = 18 ,
       face = "bold",
       color = "white"
     )
   )
 g_virus_prevalence
 joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_genus + theme(axis.text.y=element_blank()), 
-                        ncol = 2, nrow = 1, align = "h", common.legend = TRUE, legend = "bottom",
+                        ncol = 2, nrow = 1, align = "h", common.legend = TRUE, legend = "right",
                         widths = c(1, 1.5))  # Adjust the widths to make the first plot wider
 joint_plot
-#ggsave(file.path(out_dir, "filtered/prevelance_ra_genus_w_family_barplot.png"), joint_plot, width = 17.5, height = 20)
+ggsave(file.path(out_dir, "final/prevelance_ra_genus_w_family_barplot.png"), joint_plot, width = 20, height = 20)
 
 ```
