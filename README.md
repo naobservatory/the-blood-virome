@@ -14,3 +14,12 @@
     └── thijssen2023
     └── thompson2023
 ```
+
+## Requirements
+
+I source the following script:
+```
+source("/Users/harmonbhasin/work/securebio/resources/sampling-strategies/scripts/aux_plot-theme.R")
+```
+
+This can be found at this [repo](https://github.com/willbradshaw/sampling-strategies).
