@@ -146,7 +146,7 @@ mrg_hv_with_spike_in <- mrg_hv_raw %>%
 # Filter samples and add viral taxa information
 mrg_hv_named_with_spike_in <- mrg_hv_with_spike_in %>% left_join(viral_taxa, by="taxid") 
 
- # Discover viral species & genera for HV reads
+# Discover viral species & genera for HV reads
 raise_rank <- function(read_db, taxid_db, out_rank = "species", verbose = FALSE){
    # Get higher ranks than search rank
    ranks <- c("subspecies", "species", "subgenus", "genus", "subfamily", "family", "suborder", "order", "class", "subphylum", "phylum", "kingdom", "superkingdom")
@@ -194,6 +194,26 @@ basic_stats_raw <- basic_stats_raw %>%
 
 mrg_hv <- mrg_hv_with_spike_in %>%
   filter(!seq_id %in% filter_seq_ids)
+
+# Filter out Coronavirus reads
+hv_reads_species <- raise_rank(mrg_hv_named_with_spike_in, viral_taxa, "species")
+
+filter_seq_ids_corona <-hv_reads_species %>%
+  filter(name == "Severe acute respiratory syndrome-related coronavirus" & dataset %in% c("mengyi2023", "thijssen2023")) %>% 
+  pull(seq_id)
+
+remove_reads_corona <- hv_reads_species %>%
+  filter(name == "Severe acute respiratory syndrome-related coronavirus" & dataset %in% c("mengyi2023", "thijssen2023")) %>%
+  group_by(sample) %>%
+  count(name = "n_reads_removed")
+
+basic_stats_raw <- basic_stats_raw %>%
+  left_join(remove_reads_corona) %>%
+  mutate(n_read_pairs = ifelse(is.na(n_reads_removed), n_read_pairs, n_read_pairs - n_reads_removed))
+
+mrg_hv <- mrg_hv %>%
+  filter(!seq_id %in% filter_seq_ids_corona)
+
 mrg_hv_named <- mrg_hv %>% left_join(viral_taxa, by="taxid")
 
 raw_read_counts <- basic_stats_raw %>% 
@@ -336,12 +356,12 @@ ggsave(file.path(out_dir, "final/ra_hv_reads_violin.png"), g_all_violin, width =
 ```
 
 ## Family
-````{r}
+```{r}
 #| label: extract-genus-reads
 #| include: false
 #| cache-lazy: false
 hv_reads_family <- raise_rank(mrg_hv_named, viral_taxa, "family")
-hv_reads_genus <- raise_rank(mrg_hv_named, viral_taxa, "genus")
+#hv_reads_genus <- raise_rank(mrg_hv_named, viral_taxa, "genus")
 ```
 
 ### Family composition
@@ -443,6 +463,116 @@ g_hv_family <-  ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
     coord_flip()
 g_hv_family
 ggsave(file.path(out_dir, "final/all_family_composition.png"), g_hv_family, width = 20, height = 10)
+```
+
+```{r}
+dataset_hv_reads_family <- hv_reads_family %>%
+  group_by(name, taxid, dataset, sample) %>%
+  count(name = "n_reads_hv")
+
+all_dataset_ra <- read_counts_raw %>%
+  left_join(dataset_hv_reads_family, by=c("sample")) %>%
+  mutate(n_reads_hv = replace_na(n_reads_hv, 0)) %>%
+  left_join(libraries, by=c("sample", "dataset")) %>%
+  mutate(ra = n_reads_hv / n_reads_raw)
+
+all_family <- all_dataset_ra %>% select(name) %>% drop_na() %>% distinct() %>% pull(name)
+
+# Remove bacteriophage families from the list
+all_family <- all_family[!all_family %in% bacteriophage_families]
+
+# Took all_dataset_ra wihtout the last column
+#write_tsv(all_dataset_ra, file.path(out_dir, "species_dataset_ra.txt"))
+
+filtered_dataset_ra <-  all_dataset_ra %>% 
+  filter(name %in% all_family)
+
+filtered_dataset_ra <- libraries %>%
+  crossing(name = all_family) %>%
+  left_join(filtered_dataset_ra, by = c("sample", "dataset", "sample_type", "name")) %>%
+  mutate(
+    n_reads_hv = coalesce(n_reads_hv, 0),
+    ra = coalesce(ra, 0),
+    n_reads_raw = coalesce(n_reads_raw, 0)
+  ) %>%
+  group_by(name) %>%  # Group only by name, not dataset
+  filter(sum(n_reads_hv > 0) >= 5) %>%  # Count samples across all datasets
+  ungroup()
+
+# Once again, we filter for samples with 0 reads
+g_hv_family <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = ra, color = dataset, fill=dataset)) +
+  geom_quasirandom(
+    method = "quasirandom", 
+    size = 2, 
+    shape = 21, 
+    stroke = 1,
+  ) +
+  scale_y_log10("Relative abundance in positive samples", labels = label_log(digits = 3), breaks = c(1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) + 
+#  theme_kit +
+  coord_flip() +
+  scale_fill_brewer(palette = "RdYlBu") +
+  scale_color_brewer(palette = "RdYlBu") +
+  labs(x = "", y = "") +
+  theme_bw() +
+  theme(
+    text = element_text(family = "Arial"),
+    legend.title = element_text(size = 20, face = "bold"),
+    legend.text = element_text(size = 20),
+    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.ticks.y = element_blank(),
+    axis.line.x = element_line(color = "black", size = 1),
+    axis.ticks.x = element_line(color = "black", size = 1),
+    axis.ticks.length.x = unit(0.25, "cm"),
+  )
+g_hv_family
+#ggsave(file.path(out_dir, "ra_all_family_reads.png"), g_hv_family, width = 15, height = 10)
+
+virus_prevalence <- filtered_dataset_ra %>%
+  group_by(dataset, name, sample_type) %>%
+  summarize(
+    total_samples = n(),
+    positive_samples = sum(n_reads_hv > 0),
+    prevalence_percent = (positive_samples / total_samples),
+    .groups = 'drop'
+  ) %>%
+  mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
+
+g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = name, fill = dataset)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.625) +
+  scale_x_continuous(
+    name = "Fraction positive samples", 
+    trans = "sqrt",
+    breaks = c(0, 0.01, 0.1, 0.25, 0.5, 0.75, 1),
+    labels = scales::percent_format(accuracy = 1),
+    limits = c(0, 1)
+  ) +
+  scale_fill_brewer(palette = "RdYlBu", direction = -1) +
+  guides(fill=guide_legend(reverse = TRUE)) +
+  theme_bw() + 
+  theme(
+    text = element_text(family = "Arial"),
+    legend.title = element_text(size = 20, face = "bold"),
+    legend.text = element_text(size = 15),
+    axis.text.y = element_text(size = 20),
+    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.title.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.x = element_line(color = "black", size = 1),
+    axis.ticks.x = element_line(color = "black", size = 1),
+    axis.ticks.length.x = unit(0.25, "cm"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),  
+    panel.spacing = unit(0.1, "lines")  # Reduce space between facets
+  )
+g_virus_prevalence
+joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_family + theme(axis.text.y=element_blank()), 
+                        ncol = 2, nrow = 1, align = "h", common.legend = TRUE, legend = "right",
+                        widths = c(1, 1.5))  # Adjust the widths to make the first plot wider
+joint_plot
+ggsave(file.path(out_dir, "final/prevelance_ra_family_barplot.png"), joint_plot, width = 20, height = 20)
 ```
 
 ## Genus
