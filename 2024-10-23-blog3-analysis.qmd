@@ -33,7 +33,7 @@ title-block-banner: "#de2d26"
 #| include: false
 
 library(pacman)
-pacman::p_load(tidyverse, RColorBrewer, scales, ggbeeswarm, ggpubr, grid, gridExtra, ggforce, extrafont)
+pacman::p_load(tidyverse, RColorBrewer, scales, ggbeeswarm, ggpubr, grid, gridExtra, ggforce, extrafont, cowplot)
 
 source("/Users/harmonbhasin/work/securebio/resources/sampling-strategies/scripts/aux_plot-theme.R")
 theme_base <- theme_base + theme(aspect.ratio = NULL)
@@ -353,6 +353,101 @@ g_all_violin <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-10, fill = sampl
   )
 g_all_violin
 ggsave(file.path(out_dir, "final/ra_hv_reads_violin.png"), g_all_violin, width = 12.5, height = 7.5)
+
+# Calculate percentages of samples with/without viral reads
+binary_read_counts <- read_counts %>% 
+  mutate(has_virus = ifelse(p_reads > 0, "Virus detected", "No virus detected")) %>% 
+  group_by(dataset, has_virus) %>% 
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(dataset) %>%
+  mutate(
+    percentage = count / sum(count),
+    dataset = factor(dataset, levels = formatted_datasets, labels = formatted_datasets)
+  )
+
+# Create pie charts
+g_binary_pie <- ggplot(binary_read_counts, aes(x = "", y = percentage, fill = has_virus)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  facet_wrap(~dataset, ncol = 1) +
+  scale_fill_brewer(palette = "Set2", name = "Detection Status") +
+  geom_text(aes(label = scales::percent(percentage, accuracy = 1)),
+            position = position_stack(vjust = 0.5)) +
+  theme_minimal() +
+  theme(
+    # Remove unnecessary elements
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    panel.grid = element_blank(),
+    
+    # Adjust strip text and spacing
+    strip.text = element_text(size = 10, face = "bold", hjust = 0),
+    panel.spacing = unit(1, "lines"),
+    
+    # Adjust legend
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    legend.spacing.x = unit(1, 'cm'),
+    legend.position = "bottom",
+    
+    # Add more margin space
+    plot.margin = margin(t = 10, r = 30, b = 10, l = 30)
+  ) +
+  labs(title = "")
+
+g_binary_pie
+# Adjust width and height to accommodate the 6 facets
+ggsave(file.path(out_dir, "final/ra_hv_reads_binary_pie.png"), 
+       g_binary_pie, 
+       width = 4,      
+       height = 12,    
+       dpi = 300)      
+
+zero_read_counts <- read_counts %>% filter(p_reads == 0)
+nonzero_read_counts <- read_counts %>% filter(p_reads > 0)
+
+g_all_dot <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-10, fill = sample_type)) +
+  geom_jitter(data = zero_read_counts, width = 0.25) +
+  geom_quasirandom(data = nonzero_read_counts) +
+  geom_boxplot(width = 0.15, alpha = 0.8, outliers = FALSE, aes(fill = sample_type)) +
+  scale_y_log10(labels = label_log(digits = 3), breaks = c(1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) +
+  labs(title = "", x = "", y = "Relative Abundance") +
+  coord_flip() +
+  scale_fill_discrete(name = "Sample Type") +
+  theme_bw() + 
+  theme(
+    axis.text.y = element_text(size = 15),
+    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5, vjust = 1),
+    axis.title.x = element_text(size = 15),
+    axis.ticks.y = element_blank(),
+    axis.line.x = element_line(size = 1, color = "black"),
+    axis.ticks.x = element_line(size = 1, color = "black"),
+    legend.title = element_text(size = 15),
+    legend.text = element_text(size = 15),
+    legend.spacing.x = unit(1, 'cm'),
+    legend.position = c(0.8, 0.2),
+    legend.background = element_rect(fill = "white", color = "black", size = 0.5),
+    legend.margin = margin(t = 5, r = 5, b = 5, l = 5),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = unit(c(5.5, 5.5, 5.5, 5.5), "points"),
+    strip.text = element_text(size = 12, margin = margin(5, 0, 5, 0))
+  )
+g_all_dot
+ggsave(file.path(out_dir, "final/ra_hv_reads_dot.png"), g_all_dot, width = 12.5, height = 7.5)
+
+# Using cowplot
+joint_binary_plot <- plot_grid(
+  g_binary_pie + theme(legend.position = "none"),
+  g_all_dot + theme(axis.text.y = element_blank()),
+  ncol = 2,
+  rel_widths = c(1, 1.5),
+  align = "h",
+  axis = "l",
+  greedy = TRUE  # This helps with alignment
+)
+joint_binary_plot
+ggsave(file.path(out_dir, "final/ra_hv_reads_binary_dot.png"), joint_binary_plot, width = 12.5, height = 7.5)
 ```
 
 ## Family
