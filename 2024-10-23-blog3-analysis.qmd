@@ -57,7 +57,7 @@ colors_oi <- colors_oi |> unname()
 # Data input paths
 datasets <- c("cebriamendoza2021", "thijssen2023", "mengyi2023",  "aydillo2022","oconnell2023", "thompson2023")
 
-formatted_datasets <- c("Cebria-Mendoza et al. (2021)", "Thijssen et al. (2023)", "Mengyi et al. (2023)", "Aydillo et al. (2022)","O'Connell (2024)", "Thompson et al. (2023)")
+formatted_datasets <- c("Cebriá-Mendoza et al. (2021)", "Thijssen et al. (2023)", "Mengyi et al. (2023)", "Aydillo et al. (2022)","O'Connell (2024)", "Thompson et al. (2023)")
 sample_types <- c("Plasma", "Plasma", "Plasma", "Whole blood", "Whole blood", "Whole blood")
 
 data_base <- "/Users/harmonbhasin/work/securebio/blood-sampling/mgs-analysis"
@@ -403,14 +403,21 @@ ggsave(file.path(out_dir, "final/ra_hv_reads_binary_pie.png"),
        height = 12,    
        dpi = 300)      
 
-zero_read_counts <- read_counts %>% filter(p_reads == 0)
-nonzero_read_counts <- read_counts %>% filter(p_reads > 0)
 
-g_all_dot <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-10, fill = sample_type)) +
+read_counts <- read_counts %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
+binary_information <- binary_read_counts %>% filter(has_virus == "Virus detected") %>% select(dataset,percentage) %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
+zero_read_counts <- read_counts %>% filter(p_reads == 0) %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
+nonzero_read_counts <- read_counts %>% filter(p_reads > 0) %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
+
+g_all_dot <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-9, fill = sample_type)) +
   geom_jitter(data = zero_read_counts, width = 0.25) +
+#  geom_quasirandom(data = zero_read_counts) +
   geom_quasirandom(data = nonzero_read_counts) +
   geom_boxplot(width = 0.15, alpha = 0.8, outliers = FALSE, aes(fill = sample_type)) +
-  scale_y_log10(labels = label_log(digits = 3), breaks = c(1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) +
+  scale_y_log10(labels = function(x) {
+      ifelse(x == 1e-9, expression(0 ~ phantom({}^{-9})), label_log(digits = 3)(x))
+    }, breaks = c(1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) +
+  scale_x_discrete(limits=rev(formatted_datasets)) +
   labs(title = "", x = "", y = "Relative Abundance") +
   coord_flip() +
   scale_fill_discrete(name = "Sample Type") +
@@ -432,6 +439,20 @@ g_all_dot <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-10, fill = sample_t
     panel.grid.minor = element_blank(),
     plot.margin = unit(c(5.5, 5.5, 5.5, 5.5), "points"),
     strip.text = element_text(size = 12, margin = margin(5, 0, 5, 0))
+  ) + geom_label(
+    data = binary_information,
+    inherit.aes = FALSE,
+    aes(
+      y = 1,
+      x = dataset,
+      label = sprintf("%.0f%%", percentage*100)
+    ),
+    hjust = 1,
+    size = 5,
+    label.padding = unit(0.5, "lines"),  # Adds padding inside the box
+    label.size = 0.5,                    # Controls the thickness of the box border
+    fill = "white",                      # Background color of the box
+    color = "black"                      # Color of the text and box border
   )
 g_all_dot
 ggsave(file.path(out_dir, "final/ra_hv_reads_dot.png"), g_all_dot, width = 12.5, height = 7.5)
@@ -456,7 +477,7 @@ ggsave(file.path(out_dir, "final/ra_hv_reads_binary_dot.png"), joint_binary_plot
 #| include: false
 #| cache-lazy: false
 hv_reads_family <- raise_rank(mrg_hv_named, viral_taxa, "family")
-#hv_reads_genus <- raise_rank(mrg_hv_named, viral_taxa, "genus")
+hv_reads_genus <- raise_rank(mrg_hv_named, viral_taxa, "genus")
 ```
 
 ### Family composition
@@ -508,13 +529,16 @@ hv_family_collate <- hv_family_counts %>%
 # Convert the factor to a character vector
 hv_family_counts_display$classification <- as.character(hv_family_counts_display$classification)
 
-mapping <- c("Anelloviridae" = "Anelloviridae (ssDNA)", "Flaviviridae" = "Flaviviridae (+ssRNA)", "Adenoviridae" = "Adenoviridae (dsDNA)", "Papillomaviridae" = "Papillomaviridae (dsDNA)", "Parvoviridae" = "Parvoviridae (ssDNA)", "Orthoherpesviridae" = "Orthoherpesviridae (dsDNA)", "Retroviridae" = "Retroviridae (ssRNA-RT)", "Other" = "Other")
+#mapping <- c("Anelloviridae" = "Anelloviridae (ssDNA)", "Flaviviridae" = "Flaviviridae (+ssRNA)", "Adenoviridae" = "Adenoviridae (dsDNA)", "Papillomaviridae" = "Papillomaviridae (dsDNA)", "Parvoviridae" = "Parvoviridae (ssDNA)", "Orthoherpesviridae" = "Orthoherpesviridae (dsDNA)", "Retroviridae" = "Retroviridae (ssRNA-RT)", "Other" = "Other")
 
-order <- c("Anelloviridae (ssDNA)", "Flaviviridae (+ssRNA)", "Adenoviridae (dsDNA)", "Papillomaviridae (dsDNA)", "Parvoviridae (ssDNA)", "Orthoherpesviridae (dsDNA)", "Retroviridae (ssRNA-RT)", "Other")
+#order <- c("Anelloviridae (ssDNA)", "Flaviviridae (+ssRNA)", "Adenoviridae (dsDNA)", "Papillomaviridae (dsDNA)", "Parvoviridae (ssDNA)", "Orthoherpesviridae (dsDNA)", "Retroviridae (ssRNA-RT)", "Other")
+order <- c("Anelloviridae", "Flaviviridae", "Adenoviridae", "Papillomaviridae", "Parvoviridae", "Orthoherpesviridae", "Retroviridae", "Other")
 
-hv_family_counts_display <- hv_family_counts_display %>%
-  mutate(classification = mapping[as.character(classification)]) %>%
-  mutate(classification = factor(classification, levels = order))
+#hv_family_counts_display <- hv_family_counts_display %>%
+#  mutate(classification = mapping[as.character(classification)]) %>%
+#  mutate(classification = factor(classification, levels = order))
+
+hv_family_counts_display <- hv_family_counts_display %>% mutate(classification = factor(classification, levels = order))
 
 light_palette_paul_tor <- c('#77AADD', '#EE8866', '#EEDD88', '#FFAABB', '#99DDFF', '#44BB99', '#BBCC33', '#AAAA00', '#DDDDDD')
 
@@ -535,29 +559,44 @@ g_hv_family <-  ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
   scale_x_discrete(name="") +
   ggforce::facet_col(~sample_type, scales = "free_y", space = "free")+
   geom_col(data=hv_family_counts_display, position = "stack", width=0.75) +
-  scale_y_continuous(name="% HV Reads", limits=c(0,1.01), 
+  scale_y_continuous(name="% HV Reads", limits=c(0,1.00), 
                      breaks = seq(0,1,0.2),
                      expand=c(0,0), labels = function(y) sprintf("%.0f%%", y*100)) +
-  scale_fill_manual(values = colors) +
+  scale_fill_manual(values = colors, name = "Family") +
   labs(title="") +
-  guides(fill=guide_legend(nrow=2, reverse = TRUE)) +
+  guides(fill=guide_legend(nrow=1, reverse = TRUE, keywidth = 0.5, keyheight = 0.5)) +
   theme_bw() +
   theme(
-    plot.title = element_text(size=rel(1.4), hjust=0, face="plain"),
-    axis.text.y = element_text(size = 16),
-    axis.text.x = element_text(size = 16, angle = 0, hjust = 0.5, vjust = 1),
-    axis.ticks.y = element_blank(), # Remove x-axis ticks
+    plot.margin = unit(c(0.5, 1.5, 0.5, 0.5), "cm"),
     axis.title.y = element_blank(), # Remove x-axis title
-    axis.line.x = element_line(size = 1, color = "black"), # Thicker y-axis line
-    axis.ticks.x = element_line(size = 1, color = "black"), # Thicker y-axis ticks)
-    strip.text = element_text(size = 20, face = "bold"),
+    axis.title.x = element_text(size = 14, face = "bold"),
+
+    axis.text.y = element_text(size = 15),
+    axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5, vjust = 1),
+
+    axis.ticks.y = element_blank(), 
+
+#     panel.border = element_rect(color = "black", size = 1.2, fill = NA),
+#    panel.grid.major = element_line(size = 0.5, color = "grey"),
+#    panel.border = element_line(size = 1, color = "black"),
+
     legend.position = "bottom",
-    legend.text = element_text(size = 16),
-    legend.title = element_text(size = 16)
+    legend.text = element_text(size = 10, face = "italic"),
+    legend.title = element_text(size = 12, face = "bold"),
+
+    strip.background = element_rect(
+      fill = "#e5e5e5",        # Light gray background
+      color = "#e5e5e5",    # No border
+    ),
+    strip.text = element_text(
+      face = "bold",           # Bold text
+      color = "#2c3e50",       # Dark blue-gray text
+      size = 16                # Larger text size
+    )
     ) + 
     coord_flip()
 g_hv_family
-ggsave(file.path(out_dir, "final/all_family_composition.png"), g_hv_family, width = 20, height = 10)
+ggsave(file.path(out_dir, "final/all_family_composition.png"), g_hv_family, width = 12.5, height = 5)
 ```
 
 ```{r}
@@ -619,6 +658,9 @@ g_hv_family <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = 
     axis.line.x = element_line(color = "black", size = 1),
     axis.ticks.x = element_line(color = "black", size = 1),
     axis.ticks.length.x = unit(0.25, "cm"),
+    legend.position = c(0.8, 0.9),
+    legend.background = element_rect(fill = "white", color = "black", size = 0.5),
+    legend.margin = margin(t = 5, r = 5, b = 5, l = 5)
   )
 g_hv_family
 #ggsave(file.path(out_dir, "ra_all_family_reads.png"), g_hv_family, width = 15, height = 10)
@@ -649,7 +691,7 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
     text = element_text(family = "Arial"),
     legend.title = element_text(size = 20, face = "bold"),
     legend.text = element_text(size = 15),
-    axis.text.y = element_text(size = 20),
+    axis.text.y = element_text(size = 20, face = "italic"),
     axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
     axis.title.x = element_text(size = 20, face = "bold"),
     axis.title.y = element_blank(),
@@ -664,7 +706,7 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
   )
 g_virus_prevalence
 joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_family + theme(axis.text.y=element_blank()), 
-                        ncol = 2, nrow = 1, align = "h", common.legend = TRUE, legend = "right",
+                        ncol = 2, nrow = 1, align = "h", common.legend = FALSE,
                         widths = c(1, 1.5))  # Adjust the widths to make the first plot wider
 joint_plot
 ggsave(file.path(out_dir, "final/prevelance_ra_family_barplot.png"), joint_plot, width = 20, height = 20)
@@ -727,7 +769,7 @@ filtered_dataset_ra <- libraries %>%
 
 ```{r}
 filtered_dataset_ra <- filtered_dataset_ra %>%
-  filter(!(str_detect(name, "TT virus")) & !(str_detect(name, "Small anellovirus")) & !(str_detect(name, "Micro "))) %>%
+#  filter(!(str_detect(name, "TT virus")) & !(str_detect(name, "Small anellovirus")) & !(str_detect(name, "Micro "))) %>%
   mutate(family = factor(family, levels = sort(unique(family), decreasing = TRUE)))
 
 g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = ra, fill = dataset, color = dataset)) +
@@ -755,6 +797,7 @@ g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = r
     axis.line.x = element_line(color = "black", size = 1),
     axis.ticks.x = element_line(color = "black", size = 1),
     axis.ticks.length.x = unit(0.25, "cm"),
+    legend.position = c(0.8, 0.4),
     strip.background = element_rect(
       fill = "lightgrey",  # Background color
       color = "lightgrey",  # Border color
@@ -762,7 +805,7 @@ g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = r
     ),
     strip.text = element_text(
       size = 18,
-      face = "bold",
+      face = "bold.italic",
       color = "white"
     ),
   )
@@ -796,7 +839,7 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
     text = element_text(family = "Arial"),
     legend.title = element_text(size = 20, face = "bold"),
     legend.text = element_text(size = 15),
-    axis.text.y = element_text(size = 20),
+    axis.text.y = element_text(size = 20, face = "italic"),
     axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
     axis.title.x = element_text(size = 20, face = "bold"),
     axis.title.y = element_blank(),
@@ -808,6 +851,7 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
     panel.grid.minor = element_blank(),
     panel.background = element_blank(),  
     panel.spacing = unit(0.1, "lines"),  # Reduce space between facets
+    legend.position = "none",
     strip.background = element_rect(
       fill = "lightgrey",  # Background color
       color = "lightgrey",  # Border color
@@ -815,13 +859,13 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
     ),
     strip.text = element_text(
       size = 18 ,
-      face = "bold",
+      face = "bold.italic",
       color = "white"
     )
   )
 g_virus_prevalence
 joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_genus + theme(axis.text.y=element_blank()), 
-                        ncol = 2, nrow = 1, align = "h", common.legend = TRUE, legend = "right",
+                        ncol = 2, nrow = 1, align = "h", common.legend = FALSE,
                         widths = c(1, 1.5))  # Adjust the widths to make the first plot wider
 joint_plot
 ggsave(file.path(out_dir, "final/prevelance_ra_genus_w_family_barplot.png"), joint_plot, width = 20, height = 20)
