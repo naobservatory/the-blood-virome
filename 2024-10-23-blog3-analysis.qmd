@@ -327,33 +327,6 @@ read_counts <- read_counts_raw %>%
   select(!library) %>%
   mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
 
-g_all_violin <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-10, fill = sample_type)) +
-  geom_violin(alpha = 0.8, scale = "width", color = "black") +
-  geom_boxplot(width = 0.15, alpha = 0.7, outlier.shape = 21, outlier.size = 2, outlier.alpha = 0.6, fill = "white") +
-  scale_y_log10(labels = label_log(digits = 3), breaks = c(1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) +
-  labs(title = "", x = "", y = "Relative Abundance") +
-  coord_flip() +
-  scale_fill_discrete(name = "Sample Type") +
-  theme_bw() + 
-  theme(
-    axis.text.y = element_text(size = 15),
-    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5, vjust = 1),
-    axis.title.x = element_text(size = 15),
-    axis.ticks.y = element_blank(),
-    axis.line.x = element_line(size = 1, color = "black"),
-    axis.ticks.x = element_line(size = 1, color = "black"),
-    legend.title = element_text(size = 15),
-    legend.text = element_text(size = 15),
-    legend.spacing.x = unit(1, 'cm'),
-    legend.position = c(0.8, 0.2),
-    legend.background = element_rect(fill = "white", color = "black", size = 0.5),
-    legend.margin = margin(t = 5, r = 5, b = 5, l = 5),
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank()
-  )
-g_all_violin
-ggsave(file.path(out_dir, "final/ra_hv_reads_violin.png"), g_all_violin, width = 12.5, height = 7.5)
-
 # Calculate percentages of samples with/without viral reads
 binary_read_counts <- read_counts %>% 
   mutate(has_virus = ifelse(p_reads > 0, "Virus detected", "No virus detected")) %>% 
@@ -365,110 +338,47 @@ binary_read_counts <- read_counts %>%
     dataset = factor(dataset, levels = formatted_datasets, labels = formatted_datasets)
   )
 
-# Create pie charts
-g_binary_pie <- ggplot(binary_read_counts, aes(x = "", y = percentage, fill = has_virus)) +
-  geom_bar(stat = "identity", width = 1) +
-  coord_polar("y", start = 0) +
-  facet_wrap(~dataset, ncol = 1) +
-  scale_fill_brewer(palette = "Set2", name = "Detection Status") +
-  geom_text(aes(label = scales::percent(percentage, accuracy = 1)),
-            position = position_stack(vjust = 0.5)) +
-  theme_minimal() +
-  theme(
-    # Remove unnecessary elements
-    axis.title = element_blank(),
-    axis.text = element_blank(),
-    panel.grid = element_blank(),
-    
-    # Adjust strip text and spacing
-    strip.text = element_text(size = 10, face = "bold", hjust = 0),
-    panel.spacing = unit(1, "lines"),
-    
-    # Adjust legend
-    legend.title = element_text(size = 8),
-    legend.text = element_text(size = 8),
-    legend.spacing.x = unit(1, 'cm'),
-    legend.position = "bottom",
-    
-    # Add more margin space
-    plot.margin = margin(t = 10, r = 30, b = 10, l = 30)
-  ) +
-  labs(title = "")
-
-g_binary_pie
-# Adjust width and height to accommodate the 6 facets
-ggsave(file.path(out_dir, "final/ra_hv_reads_binary_pie.png"), 
-       g_binary_pie, 
-       width = 4,      
-       height = 12,    
-       dpi = 300)      
-
-
 read_counts <- read_counts %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
 binary_information <- binary_read_counts %>% filter(has_virus == "Virus detected") %>% select(dataset,percentage) %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
-zero_read_counts <- read_counts %>% filter(p_reads == 0) %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
-nonzero_read_counts <- read_counts %>% filter(p_reads > 0) %>% mutate(dataset = factor(dataset, levels = rev(formatted_datasets)))
+
+read_counts <- read_counts %>% left_join(binary_information, by="dataset") %>% mutate(dataset = sprintf("%s\n%.0f%%", dataset, percentage*100)) %>% mutate(dataset = factor(dataset,levels = c("Cebriá-Mendoza et al. (2021)\n98%", "Thijssen et al. (2023)\n100%","Mengyi et al. (2023)\n87%","Aydillo et al. (2022)\n25%","O'Connell (2024)\n24%", "Thompson et al. (2023)\n43%")))
+
+zero_read_counts <- read_counts %>% filter(p_reads == 0) 
+nonzero_read_counts <- read_counts %>% filter(p_reads > 0) 
 
 g_all_dot <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-9, fill = sample_type)) +
-  geom_jitter(data = zero_read_counts, width = 0.25) +
-#  geom_quasirandom(data = zero_read_counts) +
   geom_quasirandom(data = nonzero_read_counts) +
-  geom_boxplot(width = 0.15, alpha = 0.8, outliers = FALSE, aes(fill = sample_type)) +
+  geom_jitter(data = zero_read_counts, width = 0.25) +
+  geom_boxplot(width = 0.5, alpha = 0.8, outliers = FALSE, aes(fill = sample_type)) +
   scale_y_log10(labels = function(x) {
       ifelse(x == 1e-9, expression(0 ~ phantom({}^{-9})), label_log(digits = 3)(x))
     }, breaks = c(1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) +
-  scale_x_discrete(limits=rev(formatted_datasets)) +
-  labs(title = "", x = "", y = "Relative Abundance") +
+  scale_x_discrete(limits = rev) +
+  labs(title = "", x = "", y = "Relative abundance") +
   coord_flip() +
   scale_fill_discrete(name = "Sample Type") +
   theme_bw() + 
   theme(
-    axis.text.y = element_text(size = 15),
-    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5, vjust = 1),
-    axis.title.x = element_text(size = 15),
+    axis.text.y = element_text(size = 14),
+    axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5, vjust = 1),
+    axis.title.x = element_text(size = 14, face = "bold"),
     axis.ticks.y = element_blank(),
     axis.line.x = element_line(size = 1, color = "black"),
     axis.ticks.x = element_line(size = 1, color = "black"),
-    legend.title = element_text(size = 15),
-    legend.text = element_text(size = 15),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 14),
     legend.spacing.x = unit(1, 'cm'),
     legend.position = c(0.8, 0.2),
-    legend.background = element_rect(fill = "white", color = "black", size = 0.5),
-    legend.margin = margin(t = 5, r = 5, b = 5, l = 5),
+    legend.background = element_rect(fill = "white", color = "gray", size = 0.5),
+    legend.margin = margin(t = 10, r = 10, b = 10, l = 10),
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
     plot.margin = unit(c(5.5, 5.5, 5.5, 5.5), "points"),
-    strip.text = element_text(size = 12, margin = margin(5, 0, 5, 0))
-  ) + geom_label(
-    data = binary_information,
-    inherit.aes = FALSE,
-    aes(
-      y = 1,
-      x = dataset,
-      label = sprintf("%.0f%%", percentage*100)
-    ),
-    hjust = 1,
-    size = 5,
-    label.padding = unit(0.5, "lines"),  # Adds padding inside the box
-    label.size = 0.5,                    # Controls the thickness of the box border
-    fill = "white",                      # Background color of the box
-    color = "black"                      # Color of the text and box border
-  )
+#    strip.text = element_text(size = 12, margin = margin(5, 0, 5, 0))
+  ) 
 g_all_dot
-ggsave(file.path(out_dir, "final/ra_hv_reads_dot.png"), g_all_dot, width = 12.5, height = 7.5)
+ggsave(file.path(out_dir, "final/ra_hv_reads_dot.png"), g_all_dot, width = 12.5, height = 5.5)
 
-# Using cowplot
-joint_binary_plot <- plot_grid(
-  g_binary_pie + theme(legend.position = "none"),
-  g_all_dot + theme(axis.text.y = element_blank()),
-  ncol = 2,
-  rel_widths = c(1, 1.5),
-  align = "h",
-  axis = "l",
-  greedy = TRUE  # This helps with alignment
-)
-joint_binary_plot
-ggsave(file.path(out_dir, "final/ra_hv_reads_binary_dot.png"), joint_binary_plot, width = 12.5, height = 7.5)
 ```
 
 ## Family
@@ -571,7 +481,7 @@ g_hv_family <-  ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
     axis.title.y = element_blank(), # Remove x-axis title
     axis.title.x = element_text(size = 14, face = "bold"),
 
-    axis.text.y = element_text(size = 15),
+    axis.text.y = element_text(size = 12),
     axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5, vjust = 1),
 
     axis.ticks.y = element_blank(), 
@@ -633,34 +543,38 @@ filtered_dataset_ra <- libraries %>%
   filter(sum(n_reads_hv > 0) >= 5) %>%  # Count samples across all datasets
   ungroup()
 
+filtered_dataset_ra <- filtered_dataset_ra %>% mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
+
 # Once again, we filter for samples with 0 reads
 g_hv_family <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = ra, color = dataset, fill=dataset)) +
   geom_quasirandom(
     method = "quasirandom", 
-    size = 2, 
+    size = 1, 
     shape = 21, 
     stroke = 1,
   ) +
   scale_y_log10("Relative abundance in positive samples", labels = label_log(digits = 3), breaks = c(1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) + 
-#  theme_kit +
   coord_flip() +
-  scale_fill_brewer(palette = "RdYlBu") +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu", direction = -1, name = "Dataset") +
+  scale_color_brewer(palette = "RdYlBu", direction = -1, name = "Dataset") +
   labs(x = "", y = "") +
+  guides(color = guide_legend(reverse = TRUE, override.aes = list(size = 4)), 
+         fill = guide_legend(reverse = TRUE, override.aes = list(size = 4))) +
   theme_bw() +
   theme(
     text = element_text(family = "Arial"),
-    legend.title = element_text(size = 20, face = "bold"),
-    legend.text = element_text(size = 20),
-    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
-    axis.title.x = element_text(size = 20, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 14),
+    axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
     axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
     axis.line.x = element_line(color = "black", size = 1),
     axis.ticks.x = element_line(color = "black", size = 1),
     axis.ticks.length.x = unit(0.25, "cm"),
-    legend.position = c(0.8, 0.9),
-    legend.background = element_rect(fill = "white", color = "black", size = 0.5),
-    legend.margin = margin(t = 5, r = 5, b = 5, l = 5)
+    legend.position = c(0.75, 0.85),
+    legend.background = element_rect(fill = "white", color = "gray", size = 0.5),
+    legend.margin = margin(t = 10, r = 10, b = 10, l = 10)
   )
 g_hv_family
 #ggsave(file.path(out_dir, "ra_all_family_reads.png"), g_hv_family, width = 15, height = 10)
@@ -672,11 +586,11 @@ virus_prevalence <- filtered_dataset_ra %>%
     positive_samples = sum(n_reads_hv > 0),
     prevalence_percent = (positive_samples / total_samples),
     .groups = 'drop'
-  ) %>%
-  mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
+  ) #%>%
+#  mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
 
 g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = name, fill = dataset)) +
-  geom_bar(stat = "identity", position = "dodge", width = 0.625) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.75) +
   scale_x_continuous(
     name = "Fraction positive samples", 
     trans = "sqrt",
@@ -689,11 +603,11 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
   theme_bw() + 
   theme(
     text = element_text(family = "Arial"),
-    legend.title = element_text(size = 20, face = "bold"),
-    legend.text = element_text(size = 15),
-    axis.text.y = element_text(size = 20, face = "italic"),
-    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
-    axis.title.x = element_text(size = 20, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 14),
+    axis.text.y = element_text(size = 14, face = "italic"),
+    axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
     axis.title.y = element_blank(),
     axis.line.y = element_blank(),
     axis.ticks.y = element_blank(),
@@ -707,9 +621,9 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
 g_virus_prevalence
 joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_family + theme(axis.text.y=element_blank()), 
                         ncol = 2, nrow = 1, align = "h", common.legend = FALSE,
-                        widths = c(1, 1.5))  # Adjust the widths to make the first plot wider
+                        widths = c(1, 1.25))  # Adjust the widths to make the first plot wider
 joint_plot
-ggsave(file.path(out_dir, "final/prevelance_ra_family_barplot.png"), joint_plot, width = 20, height = 20)
+ggsave(file.path(out_dir, "final/prevelance_ra_family_barplot.png"), joint_plot, width = 13, height = 8.5)
 ```
 
 ## Genus
@@ -772,6 +686,9 @@ filtered_dataset_ra <- filtered_dataset_ra %>%
 #  filter(!(str_detect(name, "TT virus")) & !(str_detect(name, "Small anellovirus")) & !(str_detect(name, "Micro "))) %>%
   mutate(family = factor(family, levels = sort(unique(family), decreasing = TRUE)))
 
+
+filtered_dataset_ra <- filtered_dataset_ra %>% mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
+
 g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = ra, fill = dataset, color = dataset)) +
   geom_quasirandom(
     method = "quasirandom", 
@@ -780,34 +697,37 @@ g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = r
     stroke = 1,
   ) +
   scale_y_log10("Relative abundance in positive samples", labels = label_log(digits = 3), breaks = c(1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)) + 
-#  theme_kit +
   coord_flip() +
-  scale_fill_brewer(palette = "RdYlBu") +
-  scale_color_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlBu", direction = -1, name = "Dataset") +
+  scale_color_brewer(palette = "RdYlBu", direction = -1, name = "Dataset") +
+  guides(color = guide_legend(reverse = TRUE, override.aes = list(size = 4)), 
+         fill = guide_legend(reverse = TRUE, override.aes = list(size = 4))) +
   ggforce::facet_col(~family, scales = "free_y", space = "free")+
   labs(x = "", y = "") +
   theme_bw() +
   theme(
     text = element_text(family = "Arial"),
-    legend.title = element_text(size = 20, face = "bold"),
-    legend.text = element_text(size = 20),
-    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
-    axis.title.x = element_text(size = 20, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 14),
+    axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
     axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
     axis.line.x = element_line(color = "black", size = 1),
     axis.ticks.x = element_line(color = "black", size = 1),
     axis.ticks.length.x = unit(0.25, "cm"),
-    legend.position = c(0.8, 0.4),
     strip.background = element_rect(
-      fill = "lightgrey",  # Background color
-      color = "lightgrey",  # Border color
-      size = 0.5         # Border thickness
+      fill = "#e5e5e5",        # Light gray background
+      color = "#e5e5e5",    # No border
     ),
     strip.text = element_text(
-      size = 18,
-      face = "bold.italic",
-      color = "white"
+      face = "bold",           # Bold text
+      color = "#2c3e50",       # Dark blue-gray text
+      size = 14                # Larger text size
     ),
+    legend.position = c(0.75, 0.40),
+    legend.background = element_rect(fill = "white", color = "gray", size = 0.5),
+    legend.margin = margin(t = 10, r = 10, b = 10, l = 10)
   )
 g_hv_genus
 
@@ -818,9 +738,7 @@ virus_prevalence <- filtered_dataset_ra %>%
     positive_samples = sum(n_reads_hv > 0),
     prevalence_percent = (positive_samples / total_samples),
     .groups = 'drop'
-  ) %>%
-  mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
-#  arrange(dataset, desc(prevalence_percent))
+  )
 
 g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = name, fill = dataset)) +
   geom_bar(stat = "identity", position = "dodge") +
@@ -837,11 +755,11 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
   theme_bw() + 
   theme(
     text = element_text(family = "Arial"),
-    legend.title = element_text(size = 20, face = "bold"),
-    legend.text = element_text(size = 15),
-    axis.text.y = element_text(size = 20, face = "italic"),
-    axis.text.x = element_text(size = 15, angle = 0, hjust = 0.5),
-    axis.title.x = element_text(size = 20, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 14),
+    axis.text.y = element_text(size = 14, face = "italic"),
+    axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
     axis.title.y = element_blank(),
     axis.line.y = element_blank(),
     axis.ticks.y = element_blank(),
@@ -853,21 +771,20 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
     panel.spacing = unit(0.1, "lines"),  # Reduce space between facets
     legend.position = "none",
     strip.background = element_rect(
-      fill = "lightgrey",  # Background color
-      color = "lightgrey",  # Border color
-      size = 0.5         # Border thickness
+      fill = "#e5e5e5",        # Light gray background
+      color = "#e5e5e5",    # No border
     ),
     strip.text = element_text(
-      size = 18 ,
-      face = "bold.italic",
-      color = "white"
+      face = "bold",           # Bold text
+      color = "#2c3e50",       # Dark blue-gray text
+      size = 14                # Larger text size
     )
   )
 g_virus_prevalence
 joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_genus + theme(axis.text.y=element_blank()), 
                         ncol = 2, nrow = 1, align = "h", common.legend = FALSE,
-                        widths = c(1, 1.5))  # Adjust the widths to make the first plot wider
+                        widths = c(1, 1.25))  # Adjust the widths to make the first plot wider
 joint_plot
-ggsave(file.path(out_dir, "final/prevelance_ra_genus_w_family_barplot.png"), joint_plot, width = 20, height = 20)
+ggsave(file.path(out_dir, "final/prevelance_ra_genus_w_family_barplot.png"), joint_plot, width = 13, height = 18)
 
 ```
