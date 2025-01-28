@@ -1,7 +1,6 @@
-*png
+/*png
 *tsv
 *txt
-resources/*
 filtered/*
 .DS_Store
 mike-analysis.qmd

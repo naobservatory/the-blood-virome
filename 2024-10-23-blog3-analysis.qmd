@@ -1,8 +1,8 @@
 ---
-title: "Blog 3: Figures"
-subtitle: "Combined whole blood and plasma analysis"
+title: "Exploring Blood-Based Biosurveillance, Part 3: The Blood Virome (Code)"
+subtitle: "Post pipeline analysis & figures"
 author: "Harmon Bhasin"
-date: 2024-10-23
+date: 2025-01-28
 format:
   html:
     toc: true 
@@ -27,7 +27,7 @@ execute:
 title-block-banner: "#de2d26"
 ---
 
-# Basics
+# Load packages & settings
 ```{r}
 #| label: load-packages
 #| include: false
@@ -35,7 +35,7 @@ title-block-banner: "#de2d26"
 library(pacman)
 pacman::p_load(tidyverse, RColorBrewer, scales, ggbeeswarm, ggpubr, grid, gridExtra, ggforce, extrafont, cowplot)
 
-source("/Users/harmonbhasin/work/securebio/resources/sampling-strategies/scripts/aux_plot-theme.R")
+source("./scripts/aux_plot-theme.R")
 theme_base <- theme_base + theme(aspect.ratio = NULL)
 theme_kit <- theme_base + theme(
   axis.text.x = element_text(hjust = 1, angle = 45),
@@ -43,11 +43,6 @@ theme_kit <- theme_base + theme(
   text = element_text(size = 12)
 )
 tnl <- theme(legend.position = "none")
-
-# Okabe Ito color scheme with amber for yellow; see https://easystats.github.io/see/reference/scale_color_okabeito.html
-colors_oi <- grDevices::palette.colors()  
-colors_oi['yellow'] <- "#F5C710"
-colors_oi <- colors_oi |> unname()
 ```
 
 ```{r}
@@ -69,9 +64,42 @@ qc_dirs <- file.path(results_dirs, "qc")
 hv_dirs <- file.path(results_dirs, "hv")
 libraries_paths <- file.path(input_dirs, "libraries.csv")
 basic_stats_paths <- file.path(qc_dirs, "qc_basic_stats.tsv.gz")
-out_dir <- "/Users/harmonbhasin/work/securebio/blood-sampling/blog-posts/blog-3"
+out_dir <- "./figures"
 ```
 
+```{r}
+#| label: prepare-plotting-template
+#| include: false
+
+# Not sure if this section is even needed anymore
+classifications <- c("Unassigned", "Human","Bacterial", "Archaeal", "Viral")
+
+# Prepare plotting templates
+g_comp_base <- ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
+  scale_x_discrete(name="") +
+  theme_kit + 
+  theme(plot.title = element_text(hjust=0, face="plain", size=rel(1.5))) +
+  facet_grid(sample_type ~ ., scales = "free_y")
+
+g_comp_base_study <- ggplot(mapping=aes(x=sample, y=p_reads, fill=classification)) +
+  scale_x_discrete(name="") +
+  theme_kit + 
+  theme(plot.title = element_text(hjust=0, face="plain", size=rel(1.5))) +
+  facet_grid(dataset ~ ., scales = "free_y")
+
+scale_y_pc_reads <- purrr::partial(scale_y_continuous, name = "% Reads",
+                                   expand = c(0,0), labels = function(y) sprintf("%.0f%%", y*100))
+geom_comp <- purrr::partial(geom_col, position = "stack", width = 0.75)
+
+# Define a color palette for the classification
+classification_colors <- brewer.pal(8, "Accent")
+names(classification_colors) <- classifications
+scale_fill_classification <- function() {
+  scale_fill_manual(values = classification_colors, name = "Classification")
+}
+```
+
+# Remove low-quality sample, contaminants, and spike-ins
 ```{r}
 #| label: load-libraries
 #| include: false
@@ -115,7 +143,7 @@ raw_read_counts <- basic_stats_raw %>%
 #| cache-lazy: false
 
 # Get viral taxonomy
-viral_taxa <- read_tsv("/Users/harmonbhasin/work/securebio/resources/total-virus-db.tsv.gz", show_col_types = FALSE)
+viral_taxa <- read_tsv("./resources/total-virus-db.tsv.gz", show_col_types = FALSE)
 
 # Import and format reads
 hv_reads_path <- file.path(hv_dirs, "hv_hits_putative_collapsed.tsv.gz")
@@ -125,7 +153,7 @@ mrg_hv_raw <- lapply(mrg_hv_raw, function(df) {
   df %>% mutate(taxid = as.character(taxid))
 })
 
-# New change: We don't want reads where Kraken2 is unclassified
+# Remove out reads that don't follow our critiera 
 mrg_hv_with_spike_in <- mrg_hv_raw %>%
   bind_rows() %>%
   inner_join(libraries, by="sample") %>% arrange(sample) %>%
@@ -176,6 +204,7 @@ raise_rank <- function(read_db, taxid_db, out_rank = "species", verbose = FALSE)
      left_join(taxid_db, by="taxid")
    return(reads_out)
  }
+# Raise to family level to filter out spike-ins
 hv_reads_family <- raise_rank(mrg_hv_named_with_spike_in, viral_taxa, "family")
 
 # Filter out reads in Microviridae and Rhabdoviridae from dataset.
@@ -195,9 +224,10 @@ basic_stats_raw <- basic_stats_raw %>%
 mrg_hv <- mrg_hv_with_spike_in %>%
   filter(!seq_id %in% filter_seq_ids)
 
-# Filter out Coronavirus reads
+# Filter out Coronavirus reads by raising to species level
 hv_reads_species <- raise_rank(mrg_hv_named_with_spike_in, viral_taxa, "species")
 
+# Filter out Severe acute respiratory syndrome-related coronavirus reads which when BLASTED is SARS-CoV-2
 filter_seq_ids_corona <-hv_reads_species %>%
   filter(name == "Severe acute respiratory syndrome-related coronavirus" & dataset %in% c("mengyi2023", "thijssen2023")) %>% 
   pull(seq_id)
@@ -214,6 +244,7 @@ basic_stats_raw <- basic_stats_raw %>%
 mrg_hv <- mrg_hv %>%
   filter(!seq_id %in% filter_seq_ids_corona)
 
+# Add viral taxonomy
 mrg_hv_named <- mrg_hv %>% left_join(viral_taxa, by="taxid")
 
 raw_read_counts <- basic_stats_raw %>% 
@@ -226,46 +257,13 @@ raw_read_counts <- basic_stats_raw %>%
              dmean=mean(percent_duplicates), .groups = "drop")
 ```
 
-
-```{r}
-#| label: prepare-plotting-template
-#| include: false
-
-classifications <- c("Unassigned", "Human","Bacterial", "Archaeal", "Viral")
-
-# Prepare plotting templates
-g_comp_base <- ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
-  scale_x_discrete(name="") +
-  theme_kit + 
-  theme(plot.title = element_text(hjust=0, face="plain", size=rel(1.5))) +
-  facet_grid(sample_type ~ ., scales = "free_y")
-
-g_comp_base_study <- ggplot(mapping=aes(x=sample, y=p_reads, fill=classification)) +
-  scale_x_discrete(name="") +
-  theme_kit + 
-  theme(plot.title = element_text(hjust=0, face="plain", size=rel(1.5))) +
-  facet_grid(dataset ~ ., scales = "free_y")
-#  facet_wrap(~sample_type, scales = "free_y", ncols=1)
-
-scale_y_pc_reads <- purrr::partial(scale_y_continuous, name = "% Reads",
-                                   expand = c(0,0), labels = function(y) sprintf("%.0f%%", y*100))
-geom_comp <- purrr::partial(geom_col, position = "stack", width = 0.75)
-
-# Define a color palette for the classification
-classification_colors <- brewer.pal(8, "Accent")
-names(classification_colors) <- classifications
-scale_fill_classification <- function() {
-  scale_fill_manual(values = classification_colors, name = "Classification")
-}
-```
-
-# Kingdom composition
+# Kingdom-level composition
 ```{r}
 #| label: kingdom-fraction-plot
 #| warning: false
 #| fig-width: 15
 #| fig-height: 7.5
-#| fig-cap: "**Figure 1**: Kingdom composition."
+#| fig-cap: "**Table 2**: Kingdom-level taxonomic composition showing percentage of reads assigned to each kingdom after random subsampling to 1 million read pairs per sample. (Rounding from paper has not been applied here.)"
 
 # Import composition data
 tax_final_dirs <- file.path(results_dirs, "taxonomy_final")
@@ -303,14 +301,12 @@ dataset_comp_summ %>% view()
 ```
 
 # Human-infecting viruses
-
-## Overview
 ```{r}
 #| label: count-hv-reads
 #| fig-width: 15
 #| fig-height: 7.5
 #| warning: false
-#| fig-cap: "**Figure 2**: Relative abundance of human-infecting viruses across datasets (pseudocounts of 1e-10 are added to all samples)."
+#| fig-cap: "**Figure 1**: Distribution of human-infecting virus relative abundance across all samples in six studies. Each point represents a single sample. Boxplots show the distribution including samples with zero HV reads (box: 25th-75th percentiles, line: median, whiskers: extend to 1.5× interquartile range). For studies with many zeros, the median and potentially the entire boxplot may collapse to zero. Numbers underneath the study names denote the percentage of samples with at least one HV read. "
 
 read_counts_raw <- filter(basic_stats_raw) %>%
   dplyr::select(sample, n_reads_raw = n_read_pairs)
@@ -374,14 +370,11 @@ g_all_dot <- ggplot(read_counts, aes(x=dataset, y=p_reads+1e-9, fill = sample_ty
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
     plot.margin = unit(c(5.5, 5.5, 5.5, 5.5), "points"),
-#    strip.text = element_text(size = 12, margin = margin(5, 0, 5, 0))
   ) 
 g_all_dot
-ggsave(file.path(out_dir, "final/ra_hv_reads_dot.png"), g_all_dot, width = 12.5, height = 5.5)
-
+ggsave(file.path(out_dir, "/figure_1.png"), g_all_dot, width = 12.5, height = 5.5, dpi=320)
 ```
 
-## Family
 ```{r}
 #| label: extract-genus-reads
 #| include: false
@@ -390,13 +383,12 @@ hv_reads_family <- raise_rank(mrg_hv_named, viral_taxa, "family")
 hv_reads_genus <- raise_rank(mrg_hv_named, viral_taxa, "genus")
 ```
 
-### Family composition
 ```{r}
 #| label: explore-hv-family-sample-type
 #| fig-width: 15
 #| fig-height: 7.5
 #| cache-lazy: false 
-#| fig-cap: "**Figure 3**: Family composition of human-infecting viral reads"
+#| fig-cap: "**Figure 2**: Distribution of human-infecting virus families across datasets, showing the average relative abundance of each viral family per dataset. Families contributing less than 5% to any single dataset are grouped into the "Other" category."
 
 threshold_major_family <- 0.05
 
@@ -439,14 +431,7 @@ hv_family_collate <- hv_family_counts %>%
 # Convert the factor to a character vector
 hv_family_counts_display$classification <- as.character(hv_family_counts_display$classification)
 
-#mapping <- c("Anelloviridae" = "Anelloviridae (ssDNA)", "Flaviviridae" = "Flaviviridae (+ssRNA)", "Adenoviridae" = "Adenoviridae (dsDNA)", "Papillomaviridae" = "Papillomaviridae (dsDNA)", "Parvoviridae" = "Parvoviridae (ssDNA)", "Orthoherpesviridae" = "Orthoherpesviridae (dsDNA)", "Retroviridae" = "Retroviridae (ssRNA-RT)", "Other" = "Other")
-
-#order <- c("Anelloviridae (ssDNA)", "Flaviviridae (+ssRNA)", "Adenoviridae (dsDNA)", "Papillomaviridae (dsDNA)", "Parvoviridae (ssDNA)", "Orthoherpesviridae (dsDNA)", "Retroviridae (ssRNA-RT)", "Other")
 order <- c("Anelloviridae", "Flaviviridae", "Adenoviridae", "Papillomaviridae", "Parvoviridae", "Orthoherpesviridae", "Retroviridae", "Other")
-
-#hv_family_counts_display <- hv_family_counts_display %>%
-#  mutate(classification = mapping[as.character(classification)]) %>%
-#  mutate(classification = factor(classification, levels = order))
 
 hv_family_counts_display <- hv_family_counts_display %>% mutate(classification = factor(classification, levels = order))
 
@@ -480,20 +465,12 @@ g_hv_family <-  ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
     plot.margin = unit(c(0.5, 1.5, 0.5, 0.5), "cm"),
     axis.title.y = element_blank(), # Remove x-axis title
     axis.title.x = element_text(size = 14, face = "bold"),
-
     axis.text.y = element_text(size = 12),
     axis.text.x = element_text(size = 14, angle = 0, hjust = 0.5, vjust = 1),
-
     axis.ticks.y = element_blank(), 
-
-#     panel.border = element_rect(color = "black", size = 1.2, fill = NA),
-#    panel.grid.major = element_line(size = 0.5, color = "grey"),
-#    panel.border = element_line(size = 1, color = "black"),
-
     legend.position = "bottom",
     legend.text = element_text(size = 10, face = "italic"),
     legend.title = element_text(size = 12, face = "bold"),
-
     strip.background = element_rect(
       fill = "#e5e5e5",        # Light gray background
       color = "#e5e5e5",    # No border
@@ -506,10 +483,16 @@ g_hv_family <-  ggplot(mapping=aes(x=dataset, y=p_reads, fill=classification)) +
     ) + 
     coord_flip()
 g_hv_family
-ggsave(file.path(out_dir, "final/all_family_composition.png"), g_hv_family, width = 12.5, height = 5)
+ggsave(file.path(out_dir, "/figure_2.png"), g_hv_family, width = 12.5, height = 5, dpi=320)
 ```
 
 ```{r}
+#| label: explore-hv-family-sample-type
+#| fig-width: 15
+#| fig-height: 7.5
+#| cache-lazy: false 
+#| fig-cap: "**Figure 3**: Detection of human-infecting virus (HV) families across whole blood and plasma datasets, including only families found in at least five samples. Left panel: Prevalence of each viral family, shown as the percentage of samples containing at least one viral read. Right panel: Relative abundance of viral families in positive samples. "
+
 dataset_hv_reads_family <- hv_reads_family %>%
   group_by(name, taxid, dataset, sample) %>%
   count(name = "n_reads_hv")
@@ -524,9 +507,6 @@ all_family <- all_dataset_ra %>% select(name) %>% drop_na() %>% distinct() %>% p
 
 # Remove bacteriophage families from the list
 all_family <- all_family[!all_family %in% bacteriophage_families]
-
-# Took all_dataset_ra wihtout the last column
-#write_tsv(all_dataset_ra, file.path(out_dir, "species_dataset_ra.txt"))
 
 filtered_dataset_ra <-  all_dataset_ra %>% 
   filter(name %in% all_family)
@@ -577,7 +557,6 @@ g_hv_family <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = 
     legend.margin = margin(t = 10, r = 10, b = 10, l = 10)
   )
 g_hv_family
-#ggsave(file.path(out_dir, "ra_all_family_reads.png"), g_hv_family, width = 15, height = 10)
 
 virus_prevalence <- filtered_dataset_ra %>%
   group_by(dataset, name, sample_type) %>%
@@ -586,8 +565,7 @@ virus_prevalence <- filtered_dataset_ra %>%
     positive_samples = sum(n_reads_hv > 0),
     prevalence_percent = (positive_samples / total_samples),
     .groups = 'drop'
-  ) #%>%
-#  mutate(dataset = factor(dataset, levels = rev(datasets), labels = rev(formatted_datasets)))
+  )
 
 g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = name, fill = dataset)) +
   geom_bar(stat = "identity", position = "dodge", width = 0.75) +
@@ -623,14 +601,20 @@ joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_
                         ncol = 2, nrow = 1, align = "h", common.legend = FALSE,
                         widths = c(1, 1.25))  # Adjust the widths to make the first plot wider
 joint_plot
-ggsave(file.path(out_dir, "final/prevelance_ra_family_barplot.png"), joint_plot, width = 13, height = 8.5)
+ggsave(file.path(out_dir, "/figure_3.png"), joint_plot, width = 13, height = 8.5, dpi=320)
 ```
 
-## Genus
+# Appendix
 
 ```{r}
+#| label: explore-hv-family-sample-type
+#| fig-width: 15
+#| fig-height: 7.5
+#| cache-lazy: false 
+#| fig-cap: "**Figure A2**: Human- infecting virus genera variation across samples in each dataset. Left: Percentage of samples in each dataset that have reads from the human-infecting genera. Right: Relative abundance of human-infecting genera in each dataset (filtered for genera found in >5 samples)."
 
-# Create vector of bacteriophage names to remove
+
+# Create vector of bacteriophage names to remove; some of these are already removed earlier so this is partially redundant
 bacteriophages <- c("Microvirus sp.", "Microviridae sp.", 
                    "Caudovirus D_HF5_3", "Gokushovirus WZ-2015a",
                    "Caudovirus D_HF2_7", "Inovirus",
@@ -677,13 +661,8 @@ filtered_dataset_ra <- libraries %>%
   left_join(read_counts_raw, by=c("sample")) %>%
   select(-n_reads_raw.x) %>%
   rename(n_reads_raw=n_reads_raw.y)
-```
 
-
-
-```{r}
 filtered_dataset_ra <- filtered_dataset_ra %>%
-#  filter(!(str_detect(name, "TT virus")) & !(str_detect(name, "Small anellovirus")) & !(str_detect(name, "Micro "))) %>%
   mutate(family = factor(family, levels = sort(unique(family), decreasing = TRUE)))
 
 
@@ -785,6 +764,5 @@ joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_
                         ncol = 2, nrow = 1, align = "h", common.legend = FALSE,
                         widths = c(1, 1.25))  # Adjust the widths to make the first plot wider
 joint_plot
-ggsave(file.path(out_dir, "final/prevelance_ra_genus_w_family_barplot.png"), joint_plot, width = 13, height = 18)
-
+ggsave(file.path(out_dir, "/figure_A2.png"), joint_plot, width = 13, height = 15, dpi=320)
 ```
