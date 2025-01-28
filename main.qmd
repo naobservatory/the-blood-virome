@@ -11,8 +11,6 @@ format:
     number-depth: 3 
     toc-location: right 
     page-layout: full 
-    code-fold: false 
-    code-tools: false 
     df-print: paged 
     fig-format: svg
 editor: 
@@ -30,7 +28,6 @@ title-block-banner: "#de2d26"
 # Load packages & settings
 ```{r}
 #| label: load-packages
-#| include: false
 
 library(pacman)
 pacman::p_load(tidyverse, RColorBrewer, scales, ggbeeswarm, ggpubr, grid, gridExtra, ggforce, extrafont, cowplot)
@@ -47,7 +44,6 @@ tnl <- theme(legend.position = "none")
 
 ```{r}
 #| label: set-up-paths
-#| include: false
 
 # Data input paths
 datasets <- c("cebriamendoza2021", "thijssen2023", "mengyi2023",  "aydillo2022","oconnell2023", "thompson2023")
@@ -69,7 +65,6 @@ out_dir <- "./figures"
 
 ```{r}
 #| label: prepare-plotting-template
-#| include: false
 
 # Not sure if this section is even needed anymore
 classifications <- c("Unassigned", "Human","Bacterial", "Archaeal", "Viral")
@@ -102,8 +97,8 @@ scale_fill_classification <- function() {
 # Remove low-quality sample, contaminants, and spike-ins
 ```{r}
 #| label: load-libraries
-#| include: false
 
+# Remove sample with low read number
 low_sample_number <- c('SRR21924256')
 
 libraries <- purrr::map2(libraries_paths, seq_along(datasets), ~read_csv(.x, show_col_types = FALSE) %>% mutate(dataset = datasets[.y], sample_type = sample_types[.y])) %>% bind_rows() %>%
@@ -114,7 +109,6 @@ libraries <- purrr::map2(libraries_paths, seq_along(datasets), ~read_csv(.x, sho
 
 ```{r}
 #| label: import-stats
-#| include: false
 
 basic_stats <- lapply(basic_stats_paths, read_tsv, show_col_types = FALSE) %>%
   bind_rows() %>%
@@ -139,7 +133,6 @@ raw_read_counts <- basic_stats_raw %>%
 
 ```{r}
 #| label: prepare-hv
-#| include: false
 #| cache-lazy: false
 
 # Get viral taxonomy
@@ -168,7 +161,6 @@ mrg_hv_with_spike_in <- mrg_hv_raw %>%
 
 ```{r}
 #| label: raise-hv-taxa-temp
-#| include: false
 #| cache-lazy: false
 
 # Filter samples and add viral taxa information
@@ -297,7 +289,7 @@ dataset_comp_summ <- dataset_comp %>%
   mutate(p_reads = base::signif(p_reads*100, 4)) %>%
   pivot_wider(names_from = classification, values_from = p_reads)
 
-dataset_comp_summ %>% view()
+dataset_comp_summ
 ```
 
 # Human-infecting viruses
@@ -377,7 +369,6 @@ ggsave(file.path(out_dir, "/figure_1.png"), g_all_dot, width = 12.5, height = 5.
 
 ```{r}
 #| label: extract-genus-reads
-#| include: false
 #| cache-lazy: false
 hv_reads_family <- raise_rank(mrg_hv_named, viral_taxa, "family")
 hv_reads_genus <- raise_rank(mrg_hv_named, viral_taxa, "genus")
@@ -388,7 +379,7 @@ hv_reads_genus <- raise_rank(mrg_hv_named, viral_taxa, "genus")
 #| fig-width: 15
 #| fig-height: 7.5
 #| cache-lazy: false 
-#| fig-cap: "**Figure 2**: Distribution of human-infecting virus families across datasets, showing the average relative abundance of each viral family per dataset. Families contributing less than 5% to any single dataset are grouped into the "Other" category."
+#| fig-cap: "**Figure 2**: Distribution of human-infecting virus families across datasets, showing the average relative abundance of each viral family per dataset. Families contributing less than 5% to any single dataset are grouped into the 'Other' category."
 
 threshold_major_family <- 0.05
 
@@ -487,7 +478,7 @@ ggsave(file.path(out_dir, "/figure_2.png"), g_hv_family, width = 12.5, height = 
 ```
 
 ```{r}
-#| label: explore-hv-family-sample-type
+#| label: explore-hv-family-prevalence-and-abundance
 #| fig-width: 15
 #| fig-height: 7.5
 #| cache-lazy: false 
@@ -556,7 +547,7 @@ g_hv_family <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = 
     legend.background = element_rect(fill = "white", color = "gray", size = 0.5),
     legend.margin = margin(t = 10, r = 10, b = 10, l = 10)
   )
-g_hv_family
+#g_hv_family
 
 virus_prevalence <- filtered_dataset_ra %>%
   group_by(dataset, name, sample_type) %>%
@@ -596,7 +587,7 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
     panel.background = element_blank(),  
     panel.spacing = unit(0.1, "lines")  # Reduce space between facets
   )
-g_virus_prevalence
+#g_virus_prevalence
 joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_family + theme(axis.text.y=element_blank()), 
                         ncol = 2, nrow = 1, align = "h", common.legend = FALSE,
                         widths = c(1, 1.25))  # Adjust the widths to make the first plot wider
@@ -607,9 +598,9 @@ ggsave(file.path(out_dir, "/figure_3.png"), joint_plot, width = 13, height = 8.5
 # Appendix
 
 ```{r}
-#| label: explore-hv-family-sample-type
+#| label: explore-hv-genus-prevalence-and-abundance
 #| fig-width: 15
-#| fig-height: 7.5
+#| fig-height: 15
 #| cache-lazy: false 
 #| fig-cap: "**Figure A2**: Human- infecting virus genera variation across samples in each dataset. Left: Percentage of samples in each dataset that have reads from the human-infecting genera. Right: Relative abundance of human-infecting genera in each dataset (filtered for genera found in >5 samples)."
 
@@ -708,7 +699,7 @@ g_hv_genus <- ggplot(filtered_dataset_ra %>% filter(ra > 0), aes(x = name, y = r
     legend.background = element_rect(fill = "white", color = "gray", size = 0.5),
     legend.margin = margin(t = 10, r = 10, b = 10, l = 10)
   )
-g_hv_genus
+#g_hv_genus
 
 virus_prevalence <- filtered_dataset_ra %>%
   group_by(dataset, name, sample_type, family) %>%
@@ -759,7 +750,7 @@ g_virus_prevalence <- ggplot(virus_prevalence, aes(x = prevalence_percent, y = n
       size = 14                # Larger text size
     )
   )
-g_virus_prevalence
+#g_virus_prevalence
 joint_plot <- ggarrange(g_virus_prevalence + theme(legend.position = "none"), g_hv_genus + theme(axis.text.y=element_blank()), 
                         ncol = 2, nrow = 1, align = "h", common.legend = FALSE,
                         widths = c(1, 1.25))  # Adjust the widths to make the first plot wider

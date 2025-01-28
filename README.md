@@ -2,7 +2,7 @@
 
 This repository contains the code and analysis for the blog post "Exploring Blood-Based Biosurveillance, Part 3: The Blood Virome" ([update with link once blog post is published]).
 
-## Prerequisites
+# Prerequisites
 
 - R (version 4.0.0 or higher)
 - AWS CLI
@@ -20,13 +20,13 @@ This repository contains the code and analysis for the blog post "Exploring Bloo
   - cowplot
   - pacman
 
-## Analysis Scripts
+# Analysis Scripts
 
 - `main.qmd`: Main Quarto document containing the analysis code and figure generation
 - `scripts/aux_plot-theme.R`: Helper script for consistent ggplot2 theme settings
 - `scripts/download_data.sh`: Bash script to download required data from AWS S3
 
-## Usage
+# Usage
 
 1. Clone this repository:
    ```bash
@@ -64,10 +64,11 @@ This repository contains the code and analysis for the blog post "Exploring Bloo
    pacman::p_load(tidyverse, RColorBrewer, scales, ggbeeswarm, ggpubr, grid, gridExtra, ggforce, extrafont, cowplot)
    ```
 
-4. Render the analysis document:
+4. Render the analysis document (this will take a while):
    ```bash
    quarto render main.qmd
    ```
+   alternatively, you can open the document in VSCode or another IDE that supports Quarto and interactively run the code chunks (this is what we recommend).
 
 The analysis will generate multiple figures in the `figures/` directory and create an HTML document with the complete analysis.
 
