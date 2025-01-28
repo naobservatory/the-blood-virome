@@ -219,7 +219,7 @@ mrg_hv <- mrg_hv_with_spike_in %>%
 # Filter out Coronavirus reads by raising to species level
 hv_reads_species <- raise_rank(mrg_hv_named_with_spike_in, viral_taxa, "species")
 
-# Filter out Severe acute respiratory syndrome-related coronavirus reads which when BLASTED is SARS-CoV-2
+# Filter out SARS-CoV-2 reads from datasets that we expect to have contamination (the samples were collected pre-COVID-19)
 filter_seq_ids_corona <-hv_reads_species %>%
   filter(name == "Severe acute respiratory syndrome-related coronavirus" & dataset %in% c("mengyi2023", "thijssen2023")) %>% 
   pull(seq_id)
