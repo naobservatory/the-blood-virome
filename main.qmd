@@ -55,7 +55,7 @@ datasets <- c("cebriamendoza2021", "thijssen2023", "mengyi2023",  "aydillo2022",
 formatted_datasets <- c("Cebriá-Mendoza et al. (2021)", "Thijssen et al. (2023)", "Mengyi et al. (2023)", "Aydillo et al. (2022)","O'Connell (2024)", "Thompson et al. (2023)")
 sample_types <- c("Plasma", "Plasma", "Plasma", "Whole blood", "Whole blood", "Whole blood")
 
-data_base <- "/Users/harmonbhasin/work/securebio/blood-sampling/mgs-analysis"
+data_base <- "./mgs-analysis"
 
 data_dir <- file.path(data_base, datasets)
 input_dirs <- file.path(data_dir, "/input")
