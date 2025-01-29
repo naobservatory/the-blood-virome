@@ -20,6 +20,7 @@ comments:
   hypothesis: true 
 execute: 
   echo: false
+  warning: false
   freeze: auto
   cache: true
 title-block-banner: "#de2d26"
@@ -147,7 +148,7 @@ mrg_hv_raw <- lapply(mrg_hv_raw, function(df) {
 })
 
 # Remove out reads that don't follow our critiera 
-mrg_hv_with_spike_in <- mrg_hv_raw %>%
+mrg_hv_without_kraken_filter <- mrg_hv_raw %>%
   bind_rows() %>%
   inner_join(libraries, by="sample") %>% arrange(sample) %>%
   mutate(kraken_label = ifelse(assigned_hv, "Kraken2 HV assignment",
@@ -155,8 +156,29 @@ mrg_hv_with_spike_in <- mrg_hv_raw %>%
   mutate(adj_score_max = pmax(adj_score_fwd, adj_score_rev),
          highscore = adj_score_max >= 20,
          hv_status = assigned_hv | highscore) %>%
-  rename(taxid_all = taxid, taxid = taxid_best) %>%
+  rename(taxid_all = taxid, taxid = taxid_best)
+
+mrg_hv_with_spike_in <- mrg_hv_without_kraken_filter %>% 
   filter(assigned_name != "unclassified")
+mrg_hv_kraken_unclassified <- mrg_hv_without_kraken_filter %>%
+  filter(assigned_name == "unclassified")
+sprintf("There were a total of %d putatitve HV reads. After removing the %d unclassified reads by Kraken2, we get a total of %d putative HV reads that we conduct the rest of the analysis on.", nrow(mrg_hv_without_kraken_filter), nrow(mrg_hv_kraken_unclassified), nrow(mrg_hv_with_spike_in))
+```
+
+```{r}
+#| label: proportion-of-unclassified reads
+#| cache-lazy: false
+mrg_hv_without_kraken_filter %>%
+  summarize(
+    .by = c("sample_type", "dataset"),
+    `Proportion of reads classified by Kraken2` = mean(assigned_name != "unclassified")
+  ) %>% rename(`Sample Type` = sample_type, `Dataset` = dataset)
+
+mrg_hv_without_kraken_filter %>%
+  summarize(
+    .by = c("sample_type"),
+    `Proportion of reads classified by Kraken2` = mean(assigned_name != "unclassified")
+  ) %>% rename(`Sample Type` = sample_type)
 ```
 
 ```{r}
