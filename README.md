@@ -75,7 +75,9 @@ The analysis will generate multiple figures in the `figures/` directory and crea
 # Citation
 
 If you use this analysis in your work, please cite:
-[Add citation information once blog post is published]
+```
+Bhasin, H., McLaren, M., & Justen, L. (2025, January 30). Exploring Blood-Based Biosurveillance, Part 3: The Blood Virome. Nucleic Acid Observatory Blog. https://naobservatory.org/blog/exploring-blood-biosurveillance-part3
+```
 
 ## Contact
 
