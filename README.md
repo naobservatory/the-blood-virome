@@ -1,7 +1,7 @@
 # Exploring Blood-Based Biosurveillance, Part 3: The Blood Virome (Code)
 
-This repository contains the code and analysis for the blog post "Exploring Blood-Based Biosurveillance, Part 3: The Blood Virome" ([update with link once blog post is published]).
-
+This repository contains the code and analysis for the blog post "[Exploring Blood-Based Biosurveillance, Part 3: The Blood Virome](https://naobservatory.org/blog/exploring-blood-biosurveillance-part3)."
+  
 # Prerequisites
 
 - R (version 4.0.0 or higher)
